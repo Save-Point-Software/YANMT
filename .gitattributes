@@ -1,0 +1,18 @@
+* text=auto
+
+*.cs      text diff=csharp
+*.razor   text
+*.csproj  text
+*.slnx    text
+*.props   text
+*.json    text
+*.md      text
+*.ps1     text eol=crlf
+*.yml     text eol=lf
+
+# Hook scripts run under Git's bundled sh; keep LF
+.githooks/* text eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary

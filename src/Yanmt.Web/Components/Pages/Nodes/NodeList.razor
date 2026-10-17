@@ -1,0 +1,105 @@
+@page "/nodes"
+@inject NodeService Nodes
+@inject SettingsService Settings
+
+<PageTitle>Nodes - YANMT</PageTitle>
+
+<div class="page-header">
+    <h1>Nodes</h1>
+    <div class="actions">
+        <AuthorizeView Policy="@YanmtPolicies.Admin">
+            <a class="btn primary" href="nodes/new">Add node</a>
+            <a class="btn" href="nodes/import">Import CSV</a>
+        </AuthorizeView>
+        <a class="btn" href="export/nodes.csv" download>Export CSV</a>
+    </div>
+</div>
+
+@if (_nodes is null)
+{
+    <p class="muted">Loading…</p>
+}
+else if (_nodes.Count == 0)
+{
+    <div class="empty">
+        <p>No nodes yet.</p>
+        <AuthorizeView Policy="@YanmtPolicies.Admin">
+            <p class="muted">Add one, or import a CSV with columns <code>@string.Join(",", NodeCsv.Columns)</code>.</p>
+        </AuthorizeView>
+    </div>
+}
+else
+{
+    <div class="toolbar">
+        <input type="search" class="filter" placeholder="Filter by hostname, IP, site or tag" @bind="_filter" @bind:event="oninput" aria-label="Filter nodes" />
+        <span class="muted">@Filtered.Count() of @_nodes.Count</span>
+    </div>
+
+    <div class="table-wrap">
+        <table class="grid">
+            <thead>
+                <tr>
+                    <th class="col-state" aria-label="State"></th>
+                    <th>Hostname</th>
+                    <th>Management IP</th>
+                    <th>Site</th>
+                    <th>Tags</th>
+                    <th>Icon</th>
+                    <th>Polling</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var n in Filtered)
+                {
+                    <tr class="@(n.Enabled ? null : "disabled")" @key="n.Id">
+                        <td class="col-state"><StateDot State="n.State" Colors="_colors" /></td>
+                        <td>
+                            <AuthorizeView Policy="@YanmtPolicies.Admin">
+                                <Authorized><a href="nodes/@n.Id">@n.Hostname</a></Authorized>
+                                <NotAuthorized>@n.Hostname</NotAuthorized>
+                            </AuthorizeView>
+                            @if (!n.Enabled)
+                            {
+                                <span class="pill muted-pill">disabled</span>
+                            }
+                        </td>
+                        <td class="mono">@n.ManagementIp</td>
+                        <td>@n.Site</td>
+                        <td>
+                            @foreach (var t in n.Tags)
+                            {
+                                <span class="pill">@t</span>
+                            }
+                        </td>
+                        <td>@n.Icon</td>
+                        <td class="flags">
+                            <span class="@(n.IcmpEnabled ? "on" : "off")">ICMP</span>
+                            <span class="@(n.SnmpEnabled ? "on" : "off")">SNMP</span>
+                            <span class="@(n.SshEnabled ? "on" : "off")">SSH</span>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private List<NodeListItem>? _nodes;
+    private StatusColors _colors = StatusColors.Default;
+    private string _filter = "";
+
+    private IEnumerable<NodeListItem> Filtered => string.IsNullOrWhiteSpace(_filter)
+        ? _nodes ?? []
+        : (_nodes ?? []).Where(n =>
+            n.Hostname.Contains(_filter, StringComparison.OrdinalIgnoreCase)
+            || n.ManagementIp.Contains(_filter, StringComparison.OrdinalIgnoreCase)
+            || (n.Site?.Contains(_filter, StringComparison.OrdinalIgnoreCase) ?? false)
+            || n.Tags.Any(t => t.Contains(_filter, StringComparison.OrdinalIgnoreCase)));
+
+    protected override async Task OnInitializedAsync()
+    {
+        _colors = await Settings.GetAsync(SettingKeys.StatusColors);
+        _nodes = await Nodes.ListAsync();
+    }
+}

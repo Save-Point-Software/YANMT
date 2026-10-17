@@ -1,0 +1,6 @@
+<span class="state-dot" style="background:@Colors.For(State)" title="@State" aria-label="@State"></span>
+
+@code {
+    [Parameter, EditorRequired] public Severity State { get; set; }
+    [Parameter] public StatusColors Colors { get; set; } = StatusColors.Default;
+}

@@ -33,23 +33,26 @@ Before writing any code, read this whole document, then propose an implementatio
 
 | Area | Decision |
 |---|---|
-| Runtime | **.NET 10 (LTS)**, C#. Confirm the minimum Windows Server version it supports and put that in the README. |
+| Runtime | **.NET 10 (LTS)**, C#. Minimum supported OS: **Windows Server 2016** (2012/2012 R2 only with Extended Security Updates), per dotnet/core `release-notes/10.0/supported-os.md`. State this in the README. |
 | Hosting | ASP.NET Core on **Kestrel**, run as a **Windows service** via `UseWindowsService()`. No IIS, no WinSW/NSSM. |
 | HTTPS | Kestrel loads its certificate from the **Windows certificate store** (by thumbprint in config). |
 | Web UI | **Blazor Server** (interactive server rendering), so the map and status update live over SignalR with no front-end build step. Build the map as an **SVG component** (pan, zoom, drag) and draw charts as hand-built SVG components rather than adding libraries. No CDN links; the server may have no internet access. |
-| Web login | **Windows Integrated Authentication** (Negotiate/Kerberos, built into ASP.NET Core). Map two roles to AD groups set in config: `admin` and `viewer`. No LDAP library and no password handling in the app. |
+| Web login | **Windows Integrated Authentication** (Negotiate: Kerberos with NTLM fallback). Map two roles, `admin` and `viewer`, to groups set in config. Groups can be **AD groups** (`DOMAIN\Group`) or **local Windows groups** (`Group` or `MACHINE\Group`); local groups are a supported production option for servers that aren't domain-joined (NTLM with local accounts). Names are resolved to SIDs at startup. No LDAP library and no password handling in the app. |
 | Database | **SQLite** via EF Core (`Microsoft.EntityFrameworkCore.Sqlite`), WAL mode, with migrations. It's an embedded file, so there's no database server. |
 | ICMP | `System.Net.NetworkInformation.Ping` (built in, no admin rights needed) |
-| SNMP | `Lextm.SharpSnmpLib`. Verify that the version you pick supports SNMPv3 **authPriv with SHA-2 auth and AES priv** before building on it, and tell me what you found. |
+| SNMP | `Lextm.SharpSnmpLib` **12.5.7** (latest stable; 13.x is beta). It ships SHA-256/384/512 auth and AES-128/192/256 priv providers. Prefer SHA-2 ≥256-bit auth with AES-256, which needs no Cisco key extension. Prove it against CML in this order: **SHA-256/AES-128 first, then SHA-256/AES-256**. |
 | SSH | `SSH.NET` (`Renci.SshNet`). Test against IOS-XE's SSH algorithm set early. Prefer the exec channel for single `show` commands, and fall back to a shell stream only if needed. |
 | Diffs | `DiffPlex` |
 | Secrets | DPAPI via `System.Security.Cryptography.ProtectedData`, using **machine scope**, for encrypting device credentials in the DB. Never log secrets or send them back to the browser after saving. |
-| Logging | Built-in `ILogger` to rotating files plus the **Windows Event Log** for service-level errors |
+| Logging | Built-in `ILogger` with a small **custom rotating-file `ILoggerProvider`** (no logging package), plus the **Windows Event Log** for service-level errors |
 | Scheduling | Built-in `BackgroundService` / `PeriodicTimer` hosted services. No Quartz or Hangfire. |
-| Tests | xUnit, run in GitHub Actions on `windows-latest` |
+| Tests | xUnit (v3), run in GitHub Actions on `windows-latest` |
+
+Additional approved packages: `Microsoft.Extensions.Hosting.WindowsServices` (for `UseWindowsService()`), `Microsoft.AspNetCore.Authentication.Negotiate` (Windows auth on Kestrel), `Microsoft.EntityFrameworkCore.Design` (dev-time only, not shipped), and `xunit.v3` (test projects only; it runs on Microsoft.Testing.Platform, opted into via `global.json`, so the VSTest packages `Microsoft.NET.Test.Sdk` and `xunit.runner.visualstudio` were approved but turned out to be unnecessary). Ask before adding anything else.
 
 ## Read-only enforcement (important)
 
+- YANMT logs in over SSH as a **plain privilege-15 local user** (no parser view, no `enable`). The device does not restrict what that account can do, so the app's command allowlist and the read-only scan tests **are** the enforcement and must stay strict.
 - All SSH interaction goes through a single collector class that only allows commands from an explicit allowlist (`show running-config`, `show version`, `terminal length 0`, `terminal width ...`). Anything else throws before it's sent.
 - Nothing in the codebase may enter config mode or write memory. Add a test that fails if `configure`, `conf t`, `write`, or `copy` command strings appear in the SSH layer.
 - SNMP is GET/GETNEXT/GETBULK/WALK only. No SET. Don't expose a SET code path at all, including in the ad-hoc query tool.
@@ -63,8 +66,8 @@ Every source of status (ICMP, default SNMP stats, each custom monitor, backups) 
 ### Inventory
 
 - Nodes with hostname, management IP, site, tags, an icon type (router, switch, firewall, server, generic), and an enabled flag.
-- Reusable **credential profiles**: SSH (username, password, optional enable secret) and SNMPv3 (user, SHA-2 auth, AES priv). These are encrypted with DPAPI.
-- "Test connection" buttons for ICMP, SNMP, and SSH separately, with clear error messages (timeout, auth failure, unsupported algorithm, etc.).
+- Reusable **credential profiles**: SSH (username, password; no enable secret, since the account is priv-15) and SNMPv3 (user, SHA-2 auth, AES priv). These are encrypted with DPAPI.
+- "Test connection" buttons for ICMP, SNMP, and SSH separately, with clear error messages (timeout, auth failure, unsupported algorithm, etc.). SNMP testing proves SHA-256/AES-128 first, then SHA-256/AES-256.
 - CSV import and export of nodes. Exports never include secrets.
 
 ### Network map
@@ -174,7 +177,7 @@ Opens when a node is clicked on the map or in a list. It shows:
 - Install: copy the folder, create the data directory with correct ACLs, register the service with `sc.exe` or `New-Service`, set the service account, bind the certificate, and open the firewall port
 - Upgrade (stop the service, swap the binaries, start the service; migrations apply automatically on startup) and uninstall
 - Config lives in `appsettings.json` next to the exe, with no secrets in it
-- Backing up YANMT: what to copy (DB, backup folder, map images) and how the DPAPI machine-scope key affects restoring to a different server. Credentials won't decrypt on a new machine, so document re-entering them, or provide an admin export that re-encrypts with a passphrase.
+- Backing up YANMT: what to copy (DB, backup folder, map images) and how the DPAPI machine-scope key affects restoring to a different server. Credentials won't decrypt on a new machine. Provide an **admin-only credential export/import that re-encrypts with a passphrase** (AES-GCM with a PBKDF2-SHA256 key, built-in crypto only), and document both that path and manual re-entry.
 
 ## Repo and open-source setup
 
@@ -184,7 +187,7 @@ Opens when a node is clicked on the map or in a list. It shows:
   - Windows Server install guide
   - Configuration reference
   - A guide to writing custom monitors, with examples
-  - CML lab setup I can reproduce: a minimal topology and the IOS-XE snippets needed for SSH, SNMPv3 authPriv with a read-only view, and a low-privilege local user for YANMT
+  - CML lab setup I can reproduce: a minimal topology and the IOS-XE snippets needed for SSH, SNMPv3 authPriv (SHA-256 with AES-128 and AES-256) with a read-only view, and a **privilege-15 local user** for YANMT (no parser view; the app's allowlist is the read-only enforcement)
 - `CONTRIBUTING.md`, `SECURITY.md`, and a `.gitignore` that excludes the DB, backups, logs, map images, and lab config files
 - A `CLAUDE.md` at the repo root summarizing these rules (read-only enforcement, the minimal-footprint rule, the package allowlist, no hard-coded monitoring beyond the defaults, and secrets handling) so future sessions follow them
 
@@ -203,7 +206,8 @@ Opens when a node is clicked on the map or in a list. It shows:
 ## How I want you to work
 
 1. Propose the plan and phase breakdown first, and wait for my approval. A suggested order:
-   - Phase 1: skeleton, service hosting, auth, inventory, DPAPI credentials, and the status model
+   - Phase 1a: skeleton, CI, hosting, HTTPS, Windows service, auth, DB/WAL/migrations, logging, audit, the status model, and inventory + CSV
+   - Phase 1b: DPAPI credential profiles, Test Connection for ICMP/SNMP/SSH, the SSH allowlist, and the read-only scan tests
    - Phase 2: ICMP and the map (build, edit, live status, submaps)
    - Phase 3: SNMPv3 default stats and the node detail view, including the interfaces tab and SNMP query tool
    - Phase 4: custom monitors, templates, link binding, and the starter library

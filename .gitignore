@@ -1,0 +1,41 @@
+# Build output
+bin/
+obj/
+publish/
+artifacts/
+TestResults/
+*.user
+*.suo
+.vs/
+.vscode/
+.idea/
+
+# YANMT runtime data — never commit (DB, config backups, logs, map images, DPAPI entropy).
+# Patterns are anchored on purpose: Git on Windows matches case-insensitively, so a bare
+# "data/" or "maps/" would also swallow source folders like src/Yanmt.Infrastructure/Data/.
+/data/
+/src/Yanmt.Web/data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.log
+*.entropy
+/src/Yanmt.Web/data/backups/
+/src/Yanmt.Web/data/logs/
+/src/Yanmt.Web/data/maps/
+
+# Lab / integration config (contains real device addresses and credentials)
+tests/lab.json
+**/lab.json
+*.lab.json
+
+# Local overrides
+appsettings.Local.json
+appsettings.*.Local.json
+
+# Certificates and keys
+*.pfx
+*.p12
+*.pem
+*.key

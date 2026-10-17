@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Opt-in tests against a Cisco CML lab. Every test is [Trait("Category", "Integration")] and
+    skips unless tests/lab.json exists (copy tests/lab.example.json). CI excludes this category.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Yanmt.Infrastructure\Yanmt.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

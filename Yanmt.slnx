@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Yanmt.Core/Yanmt.Core.csproj" />
+    <Project Path="src/Yanmt.Infrastructure/Yanmt.Infrastructure.csproj" />
+    <Project Path="src/Yanmt.Web/Yanmt.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Yanmt.Core.Tests/Yanmt.Core.Tests.csproj" />
+    <Project Path="tests/Yanmt.Infrastructure.Tests/Yanmt.Infrastructure.Tests.csproj" />
+    <Project Path="tests/Yanmt.Integration.Tests/Yanmt.Integration.Tests.csproj" />
+  </Folder>
+</Solution>

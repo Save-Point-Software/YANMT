@@ -1,0 +1,64 @@
+@page "/audit"
+@attribute [Authorize(Policy = YanmtPolicies.Admin)]
+@using Yanmt.Infrastructure.Data
+@using Yanmt.Infrastructure.Data.Entities
+@inject AuditLogService Audit
+
+<PageTitle>Audit log - YANMT</PageTitle>
+
+<div class="page">
+    <h1>Audit log</h1>
+    <p class="muted">Every admin change to nodes, maps, monitors, credentials and settings. Secret values are never recorded.</p>
+
+    <div class="toolbar">
+        <select @bind="_entityType" @bind:after="LoadAsync" aria-label="Entity type">
+            <option value="">All types</option>
+            @foreach (var t in _types)
+            {
+                <option value="@t">@t</option>
+            }
+        </select>
+        <input type="search" placeholder="User contains…" @bind="_user" @bind:after="LoadAsync" aria-label="User filter" />
+        <span class="muted">Showing the latest @(_entries?.Count ?? 0) (max @Take)</span>
+    </div>
+
+    @if (_entries is not null)
+    {
+        <div class="table-wrap">
+            <table class="grid">
+                <thead>
+                    <tr><th>Time (UTC)</th><th>User</th><th>Action</th><th>Entity</th><th>Key</th><th>Changes</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var a in _entries)
+                    {
+                        <tr @key="a.Id">
+                            <td class="mono nowrap">@a.TimestampUtc.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                            <td>@a.User</td>
+                            <td>@a.Action</td>
+                            <td>@a.EntityType</td>
+                            <td class="mono">@a.EntityKey</td>
+                            <td class="mono changes">@a.Changes</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+@code {
+    private const int Take = 500;
+    private List<AuditEntry>? _entries;
+    private List<string> _types = [];
+    private string _entityType = "";
+    private string _user = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _types = await Audit.EntityTypesAsync();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync() => _entries = await Audit.RecentAsync(_entityType, _user, Take);
+}

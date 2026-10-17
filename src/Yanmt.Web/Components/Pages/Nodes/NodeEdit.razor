@@ -1,0 +1,168 @@
+@page "/nodes/new"
+@page "/nodes/{Id:int}"
+@attribute [Authorize(Policy = YanmtPolicies.Admin)]
+@inject NodeService Nodes
+@inject NavigationManager Nav
+
+<PageTitle>@(IsNew ? "Add node" : $"Edit {_originalHostname}") - YANMT</PageTitle>
+
+<div class="page narrow">
+    <p><a href="nodes">← Nodes</a></p>
+    <h1>@(IsNew ? "Add node" : $"Edit {_originalHostname}")</h1>
+
+    @if (_notFound)
+    {
+        <p class="error">Node @Id does not exist (it may have been deleted).</p>
+    }
+    else if (_model is not null && _editContext is not null)
+    {
+        <EditForm EditContext="_editContext" OnValidSubmit="SaveAsync" FormName="node-edit">
+            <DataAnnotationsValidator />
+
+            <div class="field">
+                <label for="hostname">Hostname</label>
+                <InputText id="hostname" @bind-Value="_model.Hostname" autocomplete="off" />
+                <ValidationMessage For="() => _model.Hostname" />
+            </div>
+
+            <div class="field">
+                <label for="ip">Management IP</label>
+                <InputText id="ip" class="mono" @bind-Value="_model.ManagementIp" autocomplete="off" placeholder="192.0.2.10" />
+                <ValidationMessage For="() => _model.ManagementIp" />
+            </div>
+
+            <div class="field-row">
+                <div class="field">
+                    <label for="site">Site</label>
+                    <InputText id="site" @bind-Value="_model.Site" list="sites" />
+                    <datalist id="sites">
+                        @foreach (var s in _sites)
+                        {
+                            <option value="@s"></option>
+                        }
+                    </datalist>
+                    <ValidationMessage For="() => _model.Site" />
+                </div>
+
+                <div class="field">
+                    <label for="icon">Icon</label>
+                    <InputSelect id="icon" @bind-Value="_model.Icon">
+                        @foreach (var icon in Enum.GetValues<NodeIconType>())
+                        {
+                            <option value="@icon">@icon</option>
+                        }
+                    </InputSelect>
+                </div>
+            </div>
+
+            <div class="field">
+                <label for="tags">Tags</label>
+                <InputText id="tags" @bind-Value="_model.Tags" placeholder="core; dmvpn-hub; lab" />
+                <div class="hint">Separate with ; or ,. Existing: @(_tags.Count == 0 ? "none yet" : string.Join(", ", _tags))</div>
+                <ValidationMessage For="() => _model.Tags" />
+            </div>
+
+            <fieldset class="checks">
+                <legend>Monitoring</legend>
+                <label><InputCheckbox @bind-Value="_model.Enabled" /> Enabled (unchecked pauses all polling for this node)</label>
+                <label><InputCheckbox @bind-Value="_model.IcmpEnabled" /> ICMP</label>
+                <label><InputCheckbox @bind-Value="_model.SnmpEnabled" /> SNMP</label>
+                <label><InputCheckbox @bind-Value="_model.SshEnabled" /> SSH (config backups)</label>
+            </fieldset>
+
+            @if (_error is not null)
+            {
+                <p class="error">@_error</p>
+            }
+
+            <div class="form-actions">
+                <button type="submit" class="btn primary" disabled="@_busy">@(IsNew ? "Create" : "Save")</button>
+                <a class="btn" href="nodes">Cancel</a>
+
+                @if (!IsNew)
+                {
+                    <span class="spacer"></span>
+                    @if (_confirmDelete)
+                    {
+                        <span>Delete @_originalHostname and its history?</span>
+                        <button type="button" class="btn danger" @onclick="DeleteAsync" disabled="@_busy">Yes, delete</button>
+                        <button type="button" class="btn" @onclick="() => _confirmDelete = false">Keep</button>
+                    }
+                    else
+                    {
+                        <button type="button" class="btn danger-outline" @onclick="() => _confirmDelete = true">Delete…</button>
+                    }
+                }
+            </div>
+        </EditForm>
+    }
+</div>
+
+@code {
+    [Parameter] public int? Id { get; set; }
+
+    private NodeEditModel? _model;
+    private EditContext? _editContext;
+    private ValidationMessageStore? _serverErrors;
+    private List<string> _tags = [];
+    private List<string> _sites = [];
+    private string? _originalHostname;
+    private string? _error;
+    private bool _notFound;
+    private bool _busy;
+    private bool _confirmDelete;
+
+    private bool IsNew => Id is null;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _tags = await Nodes.AllTagsAsync();
+        _sites = await Nodes.AllSitesAsync();
+        _model = IsNew ? new NodeEditModel() : await Nodes.GetForEditAsync(Id!.Value);
+        _notFound = _model is null;
+        _originalHostname = _model?.Hostname;
+
+        if (_model is not null)
+        {
+            _editContext = new EditContext(_model);
+            _serverErrors = new ValidationMessageStore(_editContext);
+            _editContext.OnFieldChanged += (_, e) => _serverErrors.Clear(e.FieldIdentifier);
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            var result = IsNew ? await Nodes.CreateAsync(_model!) : await Nodes.UpdateAsync(Id!.Value, _model!);
+            if (result.Ok)
+            {
+                Nav.NavigateTo("nodes");
+                return;
+            }
+
+            if (result.Field is not null)
+            {
+                _serverErrors!.Add(_editContext!.Field(result.Field), result.Error!);
+                _editContext.NotifyValidationStateChanged();
+            }
+            else
+            {
+                _error = result.Error;
+            }
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteAsync()
+    {
+        _busy = true;
+        await Nodes.DeleteAsync(Id!.Value);
+        Nav.NavigateTo("nodes");
+    }
+}

@@ -1,0 +1,19 @@
+#!/bin/sh
+# Blocks commits that contain secrets. Enable once per clone:
+#   git config core.hooksPath .githooks
+# Requires gitleaks on PATH (winget install --id Gitleaks.Gitleaks).
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+    echo "pre-commit: gitleaks is not installed or not on PATH."
+    echo "Install it with: winget install --id Gitleaks.Gitleaks"
+    echo "(Bypassing this hook is not allowed for this repo; see CONTRIBUTING.md.)"
+    exit 1
+fi
+
+gitleaks git --pre-commit --staged --redact --no-banner --verbose
+status=$?
+if [ $status -ne 0 ]; then
+    echo "pre-commit: gitleaks found possible secrets in the staged changes. Commit blocked."
+    echo "Use RFC 5737 addresses and made-up hostnames/credentials in fixtures (see CLAUDE.md)."
+fi
+exit $status

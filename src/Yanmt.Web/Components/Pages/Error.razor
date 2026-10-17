@@ -1,0 +1,24 @@
+﻿@page "/Error"
+@using System.Diagnostics
+@attribute [ExcludeFromInteractiveRouting]
+
+<PageTitle>Error - YANMT</PageTitle>
+
+<div class="page">
+    <h1>Something went wrong</h1>
+    <p class="muted">The error has been logged. If it keeps happening, check the YANMT log files in the data folder.</p>
+    @if (!string.IsNullOrEmpty(RequestId))
+    {
+        <p>Request ID: <code>@RequestId</code></p>
+    }
+</div>
+
+@code {
+    [CascadingParameter]
+    private HttpContext? HttpContext { get; set; }
+
+    private string? RequestId { get; set; }
+
+    protected override void OnInitialized() =>
+        RequestId = Activity.Current?.Id ?? HttpContext?.TraceIdentifier;
+}

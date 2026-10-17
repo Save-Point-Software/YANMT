@@ -1,0 +1,139 @@
+@page "/nodes/import"
+@attribute [Authorize(Policy = YanmtPolicies.Admin)]
+@inject NodeService Nodes
+
+<PageTitle>Import nodes - YANMT</PageTitle>
+
+<div class="page">
+    <p><a href="nodes">← Nodes</a></p>
+    <h1>Import nodes from CSV</h1>
+
+    <p class="muted">
+        Columns: <code>@string.Join(",", NodeCsv.Columns)</code>. Only <code>hostname</code> and
+        <code>management_ip</code> are required. Rows that match an existing hostname update that node; others create new nodes.
+        Nodes not in the file are left alone. Credentials are never part of the CSV.
+    </p>
+
+    <div class="field">
+        <InputFile OnChange="LoadAsync" accept=".csv,text/csv" />
+    </div>
+
+    @if (_loadError is not null)
+    {
+        <p class="error">@_loadError</p>
+    }
+
+    @if (_result is not null)
+    {
+        <p class="success">
+            Import complete: @_result.Created created, @_result.Updated updated, @_result.Unchanged unchanged.
+            <a href="nodes">View nodes</a>
+        </p>
+    }
+    else if (_preview is not null)
+    {
+        @foreach (var e in _preview.FileErrors)
+        {
+            <p class="error">@e</p>
+        }
+
+        @if (_preview.Rows.Count > 0)
+        {
+            <div class="summary">
+                <span class="pill">@_preview.Count(ImportAction.Create) to create</span>
+                <span class="pill">@_preview.Count(ImportAction.Update) to update</span>
+                <span class="pill">@_preview.Count(ImportAction.Unchanged) unchanged</span>
+                @if (_preview.Count(ImportAction.Error) > 0)
+                {
+                    <span class="pill error-pill">@_preview.Count(ImportAction.Error) with errors</span>
+                }
+            </div>
+
+            <div class="table-wrap">
+                <table class="grid">
+                    <thead>
+                        <tr><th>Line</th><th>Hostname</th><th>Action</th><th>Details</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in _preview.Rows)
+                        {
+                            <tr class="@(row.Action == ImportAction.Error ? "row-error" : null)">
+                                <td>@row.Line</td>
+                                <td>@row.Hostname</td>
+                                <td>@row.Action</td>
+                                <td>
+                                    @foreach (var m in row.Messages)
+                                    {
+                                        <div>@m</div>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+
+        <div class="form-actions">
+            @if (_preview.CanApply && (_preview.Count(ImportAction.Create) + _preview.Count(ImportAction.Update)) > 0)
+            {
+                <button class="btn primary" @onclick="ApplyAsync" disabled="@_busy">Apply import</button>
+            }
+            else if (!_preview.CanApply)
+            {
+                <span class="muted">Fix the errors in the file and upload it again. Nothing has been changed.</span>
+            }
+            else
+            {
+                <span class="muted">Nothing to change.</span>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private const long MaxFileBytes = 2 * 1024 * 1024;
+
+    private NodeCsvParseResult? _parsed;
+    private ImportPreview? _preview;
+    private ImportResult? _result;
+    private string? _loadError;
+    private bool _busy;
+
+    private async Task LoadAsync(InputFileChangeEventArgs e)
+    {
+        _parsed = null;
+        _preview = null;
+        _result = null;
+        _loadError = null;
+
+        try
+        {
+            await using var stream = e.File.OpenReadStream(MaxFileBytes);
+            using var reader = new StreamReader(stream);
+            _parsed = NodeCsv.Parse(await reader.ReadToEndAsync());
+            _preview = await Nodes.PreviewImportAsync(_parsed);
+        }
+        catch (IOException)
+        {
+            _loadError = $"The file is larger than {MaxFileBytes / 1024 / 1024} MB.";
+        }
+    }
+
+    private async Task ApplyAsync()
+    {
+        _busy = true;
+        try
+        {
+            _result = await Nodes.ApplyImportAsync(_parsed!);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _loadError = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

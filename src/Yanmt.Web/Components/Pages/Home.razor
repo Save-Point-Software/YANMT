@@ -1,0 +1,8 @@
+﻿@page "/"
+@inject NavigationManager Nav
+
+@* The network map becomes the home page in Phase 2. *@
+
+@code {
+    protected override void OnInitialized() => Nav.NavigateTo("nodes", replace: true);
+}

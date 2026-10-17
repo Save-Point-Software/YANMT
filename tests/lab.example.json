@@ -1,0 +1,7 @@
+{
+  "nodes": [
+    { "hostname": "lab-rtr-hub-01", "managementIp": "192.0.2.11" },
+    { "hostname": "lab-rtr-spoke-01", "managementIp": "192.0.2.21" },
+    { "hostname": "lab-sw-access-01", "managementIp": "192.0.2.31" }
+  ]
+}

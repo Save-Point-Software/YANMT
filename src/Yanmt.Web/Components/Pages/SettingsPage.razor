@@ -1,0 +1,100 @@
+@page "/settings"
+@inject SettingsService Settings
+@inject AuthenticationStateProvider Auth
+
+<PageTitle>Settings - YANMT</PageTitle>
+
+<div class="page narrow">
+    <h1>Settings</h1>
+
+    <section class="card">
+        <h2>Status colors</h2>
+        <p class="muted">Colors used for node, link and submap states on the map and in lists.</p>
+
+        @if (_colors is not null)
+        {
+            <div class="color-grid">
+                @foreach (var (label, severity) in Rows)
+                {
+                    <label class="color-row">
+                        <StateDot State="severity" Colors="Current" />
+                        <span>@label</span>
+                        <input type="color" value="@Get(severity)" disabled="@(!_isAdmin)"
+                               @onchange="e => Set(severity, (string)e.Value!)" />
+                        <code>@Get(severity)</code>
+                    </label>
+                }
+            </div>
+
+            @if (_isAdmin)
+            {
+                <div class="form-actions">
+                    <button class="btn primary" @onclick="SaveAsync" disabled="@(!_dirty)">Save colors</button>
+                    <button class="btn" @onclick="ResetDefaults">Reset to defaults</button>
+                    @if (_saved)
+                    {
+                        <span class="success">Saved.</span>
+                    }
+                </div>
+            }
+        }
+    </section>
+
+    <p class="muted">Polling intervals, thresholds and retention settings are added here in later phases.</p>
+</div>
+
+@code {
+    private static readonly (string Label, Severity Severity)[] Rows =
+    [
+        ("Normal", Severity.Normal), ("Warning", Severity.Warning),
+        ("Critical", Severity.Critical), ("Unknown / no data", Severity.Unknown),
+    ];
+
+    private Dictionary<Severity, string>? _colors;
+    private bool _isAdmin;
+    private bool _dirty;
+    private bool _saved;
+
+    private StatusColors Current => new(Get(Severity.Normal), Get(Severity.Warning), Get(Severity.Critical), Get(Severity.Unknown));
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await Auth.GetAuthenticationStateAsync();
+        _isAdmin = state.User.IsInRole(YanmtRoles.Admin);
+        Load(await Settings.GetAsync(SettingKeys.StatusColors));
+    }
+
+    private void Load(StatusColors c) => _colors = new()
+    {
+        [Severity.Normal] = c.Normal, [Severity.Warning] = c.Warning,
+        [Severity.Critical] = c.Critical, [Severity.Unknown] = c.Unknown,
+    };
+
+    private string Get(Severity s) => _colors![s];
+
+    private void Set(Severity s, string value)
+    {
+        _colors![s] = value.ToUpperInvariant();
+        _dirty = true;
+        _saved = false;
+    }
+
+    private void ResetDefaults()
+    {
+        Load(StatusColors.Default);
+        _dirty = true;
+        _saved = false;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (!_isAdmin || !Current.IsValid())
+        {
+            return;
+        }
+
+        await Settings.SetAsync(SettingKeys.StatusColors, Current);
+        _dirty = false;
+        _saved = true;
+    }
+}
