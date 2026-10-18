@@ -5,7 +5,7 @@ namespace Yanmt.Core.Tests.Inventory;
 public class NodeCsvTests
 {
     private static readonly NodeCsvRecord Hub = new(
-        "rtr-hub-01", "192.0.2.1", "HQ, Building 2", ["core", "dmvpn"], NodeIconType.Router, true, true, true, true);
+        "rtr-hub-01", "192.0.2.1", "HQ, Building 2", ["core", "dmvpn"], NodeIconType.Router, true, true, true, true, "lab-v3", "lab-ssh");
 
     private static readonly NodeCsvRecord Spoke = new(
         "rtr-spoke-07", "2001:db8::7", null, [], NodeIconType.Router, false, true, false, false);
@@ -122,6 +122,27 @@ public class NodeCsvTests
     {
         var rec = NodeCsv.Parse("hostname,management_ip\r\nrtr1,2001:DB8:0:0::1\r\n").Rows[0].Record!;
         Assert.Equal("2001:db8::1", rec.ManagementIp);
+    }
+
+    [Fact]
+    public void Profile_columns_are_optional_and_blank_means_none()
+    {
+        var parsed = NodeCsv.Parse("hostname,management_ip,snmp_profile,ssh_profile\r\nrtr-a,192.0.2.1,lab-v3,\r\nrtr-b,192.0.2.2,,lab-ssh\r\n");
+
+        Assert.False(parsed.HasErrors);
+        Assert.Equal(("lab-v3", (string?)null), (parsed.Rows[0].Record!.SnmpProfile, parsed.Rows[0].Record!.SshProfile));
+        Assert.Equal(((string?)null, "lab-ssh"), (parsed.Rows[1].Record!.SnmpProfile, parsed.Rows[1].Record!.SshProfile));
+
+        var minimal = NodeCsv.Parse("hostname,management_ip\r\nrtr-a,192.0.2.1\r\n");
+        Assert.Null(minimal.Rows[0].Record!.SnmpProfile);
+    }
+
+    [Fact]
+    public void Overlong_profile_name_is_a_row_error()
+    {
+        var parsed = NodeCsv.Parse($"hostname,management_ip,ssh_profile\r\nrtr-a,192.0.2.1,{new string('p', 65)}\r\n");
+
+        Assert.Contains(parsed.Rows[0].Errors, e => e.Contains("ssh_profile"));
     }
 
     private static void AssertSame(NodeCsvRecord expected, NodeCsvRecord actual)

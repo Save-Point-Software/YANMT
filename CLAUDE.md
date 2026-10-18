@@ -13,10 +13,16 @@ non-trivial work. The owner is a CCNP-level network engineer: don't explain netw
   - All SSH goes through one collector class that only sends allowlisted commands:
     `show running-config`, `show version`, `terminal length 0`, `terminal width <n>`.
     Anything else throws **before** it is sent.
-  - No code may enter config mode or write memory. A test (added in Phase 1b) fails if `configure`,
-    `conf t`, `write`, or `copy` command strings appear in the SSH layer. Never weaken the allowlist or that test.
+  - No code may enter config mode or write memory. `tests/Yanmt.Infrastructure.Tests/ReadOnly/ReadOnlyScanTests.cs`
+    fails if `configure`, `conf t`, `write`, or `copy` strings appear in the SSH layer, if any SSH.NET type
+    is used outside `ReadOnlySshCollector`, or if a command is sent anywhere but its allowlist-checked
+    `SendAsync`. Never weaken the allowlist or those tests.
+  - SSH host keys are pinned per node (trust on first use); a mismatch is refused, never auto-accepted.
 - **SNMP:** GET / GETNEXT / GETBULK / WALK only. No SET code path anywhere, including the ad-hoc
-  query tool. Don't reference SharpSnmpLib's set APIs.
+  query tool. Don't reference SharpSnmpLib's set APIs. SharpSnmpLib is used only under
+  `Collectors/Snmp`, behind `ISnmpReader`.
+  - SharpSnmpLib does not verify response HMACs. Every SNMPv3 response must pass
+    `UsmAuthentication.Verify` (and the authPriv/user/engine checks in `SnmpV3Reader`) before use.
 
 ### 2. Minimal server footprint
 - Nothing installed on the server but YANMT: no .NET runtime install, IIS, DB server, Python,

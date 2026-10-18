@@ -57,6 +57,57 @@ namespace Yanmt.Infrastructure.Data.Migrations
                     b.ToTable("AuditEntries");
                 });
 
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.CredentialProfile", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .UseCollation("NOCASE");
+
+                    b.Property<int>("Port")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<byte[]>("ProtectedSecrets")
+                        .IsRequired()
+                        .HasColumnType("BLOB");
+
+                    b.Property<string>("SnmpAuth")
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SnmpPriv")
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Username")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Name")
+                        .IsUnique();
+
+                    b.ToTable("CredentialProfiles");
+                });
+
             modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.Event", b =>
                 {
                     b.Property<long>("Id")
@@ -147,7 +198,21 @@ namespace Yanmt.Infrastructure.Data.Migrations
                     b.Property<bool>("SnmpEnabled")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int?>("SnmpProfileId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("SshEnabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SshHostKeyAlgorithm")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SshHostKeyFingerprint")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("SshProfileId")
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTime>("UpdatedUtc")
@@ -161,6 +226,10 @@ namespace Yanmt.Infrastructure.Data.Migrations
                     b.HasIndex("ManagementIp");
 
                     b.HasIndex("Site");
+
+                    b.HasIndex("SnmpProfileId");
+
+                    b.HasIndex("SshProfileId");
 
                     b.ToTable("Nodes");
                 });
@@ -280,6 +349,23 @@ namespace Yanmt.Infrastructure.Data.Migrations
                         .OnDelete(DeleteBehavior.SetNull);
 
                     b.Navigation("Node");
+                });
+
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.Node", b =>
+                {
+                    b.HasOne("Yanmt.Infrastructure.Data.Entities.CredentialProfile", "SnmpProfile")
+                        .WithMany()
+                        .HasForeignKey("SnmpProfileId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Yanmt.Infrastructure.Data.Entities.CredentialProfile", "SshProfile")
+                        .WithMany()
+                        .HasForeignKey("SshProfileId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("SnmpProfile");
+
+                    b.Navigation("SshProfile");
                 });
 
             modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.NodeTag", b =>

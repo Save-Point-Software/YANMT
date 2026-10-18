@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Yanmt.Core.Credentials;
 using Yanmt.Core.Inventory;
 using Yanmt.Core.Status;
 using Yanmt.Infrastructure.Data.Entities;
@@ -9,6 +10,7 @@ public class YanmtDbContext(DbContextOptions<YanmtDbContext> options) : DbContex
 {
     public DbSet<Node> Nodes => Set<Node>();
     public DbSet<Tag> Tags => Set<Tag>();
+    public DbSet<CredentialProfile> CredentialProfiles => Set<CredentialProfile>();
     public DbSet<NodeTag> NodeTags => Set<NodeTag>();
     public DbSet<StatusSource> StatusSources => Set<StatusSource>();
     public DbSet<Event> Events => Set<Event>();
@@ -24,6 +26,9 @@ public class YanmtDbContext(DbContextOptions<YanmtDbContext> options) : DbContex
         configurationBuilder.Properties<Severity>().HaveConversion<string>().HaveMaxLength(16);
         configurationBuilder.Properties<StatusSourceType>().HaveConversion<string>().HaveMaxLength(16);
         configurationBuilder.Properties<NodeIconType>().HaveConversion<string>().HaveMaxLength(16);
+        configurationBuilder.Properties<CredentialKind>().HaveConversion<string>().HaveMaxLength(16);
+        configurationBuilder.Properties<SnmpAuthProtocol>().HaveConversion<string>().HaveMaxLength(16);
+        configurationBuilder.Properties<SnmpPrivProtocol>().HaveConversion<string>().HaveMaxLength(16);
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -36,6 +41,19 @@ public class YanmtDbContext(DbContextOptions<YanmtDbContext> options) : DbContex
             e.HasIndex(n => n.ManagementIp);
             e.Property(n => n.Site).HasMaxLength(NodeRules.MaxSiteLength);
             e.HasIndex(n => n.Site);
+            e.Property(n => n.SshHostKeyAlgorithm).HasMaxLength(64);
+            e.Property(n => n.SshHostKeyFingerprint).HasMaxLength(100);
+
+            // A profile in use can't be deleted; CredentialService reports which nodes use it.
+            e.HasOne(n => n.SnmpProfile).WithMany().HasForeignKey(n => n.SnmpProfileId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(n => n.SshProfile).WithMany().HasForeignKey(n => n.SshProfileId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<CredentialProfile>(e =>
+        {
+            e.Property(p => p.Name).HasMaxLength(CredentialRules.MaxNameLength).UseCollation("NOCASE");
+            e.HasIndex(p => p.Name).IsUnique();
+            e.Property(p => p.Username).HasMaxLength(CredentialRules.MaxUsernameLength);
         });
 
         modelBuilder.Entity<Tag>(e =>

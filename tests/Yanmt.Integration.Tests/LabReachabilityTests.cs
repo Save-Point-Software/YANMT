@@ -2,7 +2,7 @@ using System.Net.NetworkInformation;
 
 namespace Yanmt.Integration.Tests;
 
-/// <summary>Sanity check that the lab is up before the Phase 1b SNMP/SSH tests run against it.</summary>
+/// <summary>Sanity check that the lab is up before the SNMP and SSH tests run against it.</summary>
 [Trait("Category", "Integration")]
 public class LabReachabilityTests
 {

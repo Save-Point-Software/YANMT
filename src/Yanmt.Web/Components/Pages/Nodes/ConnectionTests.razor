@@ -1,0 +1,124 @@
+@inject ConnectionTester Tester
+
+<section class="card">
+    <h2>Test connection</h2>
+    <p class="muted">Uses the saved management IP and credential profiles@(UnsavedChanges ? " (save first to test your changes)" : "").</p>
+
+    <div class="actions">
+        <button type="button" class="btn" disabled="@(_running is not null)" @onclick="() => RunAsync(ConnectionTestKind.Icmp)">Test ICMP</button>
+        <button type="button" class="btn" disabled="@(_running is not null)" @onclick="() => RunAsync(ConnectionTestKind.Snmp)">Test SNMP</button>
+        <button type="button" class="btn" disabled="@(_running is not null)" @onclick="() => RunAsync(ConnectionTestKind.Ssh)">Test SSH</button>
+        @if (_running is not null)
+        {
+            <span class="muted">Testing @_running…</span>
+        }
+    </div>
+
+    @foreach (var result in _results.Values.OrderBy(r => r.Kind))
+    {
+        <div class="test-result @(result.Success ? "ok" : "failed")" @key="result.Kind">
+            <div class="test-head">
+                <strong>@result.Kind.ToString().ToUpperInvariant()</strong>
+                <span class="pill @(result.Success ? "ok-pill" : "error-pill")">@(result.Success ? "OK" : Describe(result.Failure))</span>
+                <span class="muted">@result.Elapsed.TotalMilliseconds.ToString("0") ms</span>
+            </div>
+            <p>@result.Summary</p>
+
+            @if (result.Details.Count > 0)
+            {
+                <dl class="details">
+                    @foreach (var (key, value) in result.Details)
+                    {
+                        <dt>@key</dt>
+                        <dd class="mono">@value</dd>
+                    }
+                </dl>
+            }
+
+            @if (!string.IsNullOrEmpty(result.Output))
+            {
+                <pre class="output">@result.Output</pre>
+            }
+
+            @if (result is { Failure: FailureCategory.HostKeyChanged, PresentedHostKey: { } presented })
+            {
+                <p>
+                    Only trust the new key if you know why it changed (device replaced, keys regenerated).
+                    <button type="button" class="btn danger-outline" disabled="@(_running is not null)" @onclick="() => TrustAsync(presented)">
+                        Trust @presented and retest
+                    </button>
+                </p>
+            }
+        </div>
+    }
+
+    @if (HostKey is not null)
+    {
+        <p class="hint">
+            Pinned SSH host key: <code>@HostKey</code>
+            <button type="button" class="btn link" disabled="@(_running is not null)" @onclick="ForgetAsync">Forget</button>
+        </p>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public int NodeId { get; set; }
+    [Parameter] public bool UnsavedChanges { get; set; }
+
+    /// <summary>The pinned key ("algorithm SHA256:…"), shown so it can be compared with the device.</summary>
+    [Parameter] public string? HostKey { get; set; }
+
+    [Parameter] public EventCallback HostKeyChanged { get; set; }
+
+    private readonly Dictionary<ConnectionTestKind, ConnectionTestResult> _results = [];
+    private ConnectionTestKind? _running;
+
+    private async Task RunAsync(ConnectionTestKind kind, string? trust = null)
+    {
+        _running = kind;
+        try
+        {
+            _results[kind] = kind switch
+            {
+                ConnectionTestKind.Icmp => await Tester.TestIcmpAsync(NodeId),
+                ConnectionTestKind.Snmp => await Tester.TestSnmpAsync(NodeId),
+                _ => await Tester.TestSshAsync(NodeId, trust),
+            };
+
+            if (kind == ConnectionTestKind.Ssh && _results[kind].Success)
+            {
+                await HostKeyChanged.InvokeAsync(); // a first connection or a trusted key changes the pin
+            }
+        }
+        finally
+        {
+            _running = null;
+        }
+    }
+
+    private Task TrustAsync(string fingerprint) => RunAsync(ConnectionTestKind.Ssh, fingerprint);
+
+    private async Task ForgetAsync()
+    {
+        await Tester.ForgetHostKeyAsync(NodeId);
+        _results.Remove(ConnectionTestKind.Ssh);
+        await HostKeyChanged.InvokeAsync();
+    }
+
+    private static string Describe(FailureCategory? failure) => failure switch
+    {
+        FailureCategory.NotConfigured => "Not configured",
+        FailureCategory.CredentialUnreadable => "Credential unreadable",
+        FailureCategory.AuthFailure => "Auth failure",
+        FailureCategory.UnknownUser => "Unknown user",
+        FailureCategory.UnknownEngine => "Unknown engine",
+        FailureCategory.NotInTimeWindow => "Not in time window",
+        FailureCategory.DecryptionError => "Decryption error",
+        FailureCategory.UnsupportedSecurityLevel => "Unsupported security level",
+        FailureCategory.UnsupportedAlgorithm => "Unsupported algorithm",
+        FailureCategory.HostKeyChanged => "Host key changed",
+        FailureCategory.DeviceError => "Device error",
+        null => "Failed",
+        _ => failure.ToString()!,
+    };
+}

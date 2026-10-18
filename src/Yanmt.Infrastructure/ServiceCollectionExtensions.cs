@@ -1,8 +1,14 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Yanmt.Infrastructure.Collectors.Icmp;
+using Yanmt.Infrastructure.Collectors.Snmp;
+using Yanmt.Infrastructure.Collectors.Ssh;
+using Yanmt.Infrastructure.Connectivity;
+using Yanmt.Infrastructure.Credentials;
 using Yanmt.Infrastructure.Data;
 using Yanmt.Infrastructure.Inventory;
+using Yanmt.Infrastructure.Security;
 using Yanmt.Infrastructure.Settings;
 
 namespace Yanmt.Infrastructure;
@@ -31,6 +37,13 @@ public static class ServiceCollectionExtensions
         services.AddScoped<NodeService>();
         services.AddScoped<SettingsService>();
         services.AddScoped<AuditLogService>();
+
+        services.AddSingleton<SecretProtector>();
+        services.AddScoped<CredentialService>();
+        services.AddSingleton<IcmpProbe>();
+        services.AddSingleton<ISnmpReader, SnmpV3Reader>();
+        services.AddSingleton<ReadOnlySshCollector>();
+        services.AddScoped<ConnectionTester>();
         return services;
     }
 }

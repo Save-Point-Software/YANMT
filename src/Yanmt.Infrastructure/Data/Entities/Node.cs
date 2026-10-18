@@ -16,6 +16,18 @@ public class Node : IAudited
     public bool IcmpEnabled { get; set; } = true;
     public bool SnmpEnabled { get; set; }
     public bool SshEnabled { get; set; }
+
+    public int? SnmpProfileId { get; set; }
+    public CredentialProfile? SnmpProfile { get; set; }
+    public int? SshProfileId { get; set; }
+    public CredentialProfile? SshProfile { get; set; }
+
+    /// <summary>Host key algorithm pinned on first successful SSH connection (trust on first use).</summary>
+    public string? SshHostKeyAlgorithm { get; set; }
+
+    /// <summary>"SHA256:…" fingerprint of the pinned host key. Connections presenting another key are refused.</summary>
+    public string? SshHostKeyFingerprint { get; set; }
+
     public DateTime CreatedUtc { get; set; }
     public DateTime UpdatedUtc { get; set; }
 

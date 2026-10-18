@@ -96,6 +96,17 @@ try
     {
         var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<YanmtDbContext>>();
         await DatabaseInitializer.InitializeAsync(factory, startupLogger);
+
+        // Load (or create) the credential entropy file now, so an ACL problem stops startup clearly.
+        var protector = app.Services.GetRequiredService<SecretProtector>();
+        protector.EnsureReady();
+        await using var db = await factory.CreateDbContextAsync();
+        if (protector.CreatedNewKey && await db.CredentialProfiles.AnyAsync())
+        {
+            startupLogger.LogError(
+                "A new credential key file was created, but credential profiles already exist. Their passwords can't be decrypted: " +
+                "restore secrets.entropy from backup, or re-enter the passwords under Credentials.");
+        }
     }
 
     if (!app.Environment.IsDevelopment())

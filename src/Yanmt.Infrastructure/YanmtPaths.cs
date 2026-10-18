@@ -26,6 +26,9 @@ public sealed class YanmtPaths
     public string Backups => Path.Combine(Root, "backups");
     public string MapImages => Path.Combine(Root, "maps");
 
+    /// <summary>Extra DPAPI entropy for stored credentials. Back it up with the database.</summary>
+    public string EntropyFile => Path.Combine(Root, "secrets.entropy");
+
     public static YanmtPaths Resolve(string? configuredPath, string contentRoot)
     {
         if (string.IsNullOrWhiteSpace(configuredPath))

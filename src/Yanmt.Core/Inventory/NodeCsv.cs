@@ -2,7 +2,10 @@ using Yanmt.Core.Csv;
 
 namespace Yanmt.Core.Inventory;
 
-/// <summary>A node as it appears in CSV. Deliberately has no credential or secret fields.</summary>
+/// <summary>
+/// A node as it appears in CSV. Credential profiles are referenced by name only; there are
+/// deliberately no credential or secret fields.
+/// </summary>
 public sealed record NodeCsvRecord(
     string Hostname,
     string ManagementIp,
@@ -12,7 +15,9 @@ public sealed record NodeCsvRecord(
     bool Enabled,
     bool IcmpEnabled,
     bool SnmpEnabled,
-    bool SshEnabled);
+    bool SshEnabled,
+    string? SnmpProfile = null,
+    string? SshProfile = null);
 
 /// <summary>One parsed data row: either a record or the errors that stopped it. Line is 1-based, header = line 1.</summary>
 public sealed record NodeCsvRow(int Line, NodeCsvRecord? Record, IReadOnlyList<string> Errors)
@@ -32,6 +37,7 @@ public static class NodeCsv
     [
         "hostname", "management_ip", "site", "tags", "icon",
         "enabled", "icmp_enabled", "snmp_enabled", "ssh_enabled",
+        "snmp_profile", "ssh_profile",
     ];
 
     private static readonly string[] RequiredColumns = ["hostname", "management_ip"];
@@ -45,11 +51,17 @@ public static class NodeCsv
             [
                 n.Hostname, n.ManagementIp, n.Site, string.Join(';', n.Tags), n.Icon.ToString().ToLowerInvariant(),
                 Bool(n.Enabled), Bool(n.IcmpEnabled), Bool(n.SnmpEnabled), Bool(n.SshEnabled),
+                n.SnmpProfile, n.SshProfile,
             ]));
         return CsvCodec.Write(rows);
 
         static string Bool(bool b) => b ? "true" : "false";
     }
+
+    private static string? ValidateProfileName(string column, string? name) =>
+        name is not null && name.Length > Credentials.CredentialRules.MaxNameLength
+            ? $"{column} must be at most {Credentials.CredentialRules.MaxNameLength} characters."
+            : null;
 
     /// <summary>
     /// Parses and validates every row. Missing optional columns take defaults
@@ -143,6 +155,10 @@ public static class NodeCsv
             var icmp = ParseBool("icmp_enabled", true);
             var snmp = ParseBool("snmp_enabled", false);
             var ssh = ParseBool("ssh_enabled", false);
+            var snmpProfile = Get("snmp_profile");
+            var sshProfile = Get("ssh_profile");
+            Add(ValidateProfileName("snmp_profile", snmpProfile));
+            Add(ValidateProfileName("ssh_profile", sshProfile));
 
             if (!string.IsNullOrEmpty(hostname))
             {
@@ -166,7 +182,9 @@ public static class NodeCsv
                     enabled,
                     icmp,
                     snmp,
-                    ssh)
+                    ssh,
+                    snmpProfile,
+                    sshProfile)
                 : null;
             rows.Add(new NodeCsvRow(line, record, errors));
 

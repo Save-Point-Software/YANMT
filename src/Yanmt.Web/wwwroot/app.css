@@ -342,3 +342,78 @@ table.grid {
 .blazor-error-boundary::after {
     content: "An error has occurred.";
 }
+
+/* Connection tests */
+.test-result {
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--success);
+    border-radius: 4px;
+    padding: 0.6rem 0.9rem;
+    margin-top: 0.75rem;
+}
+
+.test-result.failed {
+    border-left-color: var(--danger);
+}
+
+.test-result p {
+    margin: 0.35rem 0;
+}
+
+.test-head {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.ok-pill {
+    background: #dcf2e3;
+    color: var(--success);
+}
+
+dl.details {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.15rem 0.9rem;
+    margin: 0.4rem 0;
+    font-size: 0.85rem;
+}
+
+dl.details dt {
+    color: var(--muted);
+}
+
+dl.details dd {
+    margin: 0;
+    word-break: break-all;
+}
+
+pre.output {
+    background: #f3f5f8;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.5rem 0.7rem;
+    max-height: 18rem;
+    overflow: auto;
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    white-space: pre-wrap;
+}
+
+.btn.link {
+    border: none;
+    background: none;
+    color: var(--accent);
+    padding: 0 0.3rem;
+    text-decoration: underline;
+}
+
+.field.narrow-field {
+    flex: 0 0 8rem;
+    min-width: 8rem;
+}
+
+.field-row.profiles {
+    margin-top: 0.9rem;
+}

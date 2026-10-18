@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Yanmt.Core.Credentials;
 using Yanmt.Core.Inventory;
 using Yanmt.Core.Status;
 using Yanmt.Infrastructure.Data;
@@ -60,6 +61,9 @@ public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, Tim
                 IcmpEnabled = n.IcmpEnabled,
                 SnmpEnabled = n.SnmpEnabled,
                 SshEnabled = n.SshEnabled,
+                SnmpProfileId = n.SnmpProfileId,
+                SshProfileId = n.SshProfileId,
+                SshHostKey = n.SshHostKeyFingerprint is null ? null : $"{n.SshHostKeyAlgorithm} {n.SshHostKeyFingerprint}",
             };
     }
 
@@ -106,6 +110,8 @@ public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, Tim
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var nodes = await db.Nodes.AsNoTracking()
             .Include(n => n.Tags).ThenInclude(nt => nt.Tag)
+            .Include(n => n.SnmpProfile)
+            .Include(n => n.SshProfile)
             .ToListAsync(cancellationToken);
         return NodeCsv.Export(nodes.Select(ToCsvRecord));
     }
@@ -115,7 +121,7 @@ public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, Tim
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var existing = await LoadByHostnameAsync(db, tracked: false, cancellationToken);
-        return BuildPreview(parsed, existing);
+        return BuildPreview(parsed, existing, await LoadProfilesAsync(db, cancellationToken));
     }
 
     /// <summary>
@@ -128,7 +134,8 @@ public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, Tim
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         var existing = await LoadByHostnameAsync(db, tracked: true, cancellationToken);
-        var preview = BuildPreview(parsed, existing);
+        var profiles = await LoadProfilesAsync(db, cancellationToken);
+        var preview = BuildPreview(parsed, existing, profiles);
         if (!preview.CanApply)
         {
             throw new InvalidOperationException("The import has errors; fix them and upload the file again.");
@@ -143,7 +150,7 @@ public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, Tim
             var rec = row.Record!;
             if (existing.TryGetValue(rec.Hostname, out var node))
             {
-                if (Matches(node, rec))
+                if (Matches(node, rec, profiles))
                 {
                     unchanged++;
                     continue;
@@ -165,6 +172,8 @@ public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, Tim
             node.IcmpEnabled = rec.IcmpEnabled;
             node.SnmpEnabled = rec.SnmpEnabled;
             node.SshEnabled = rec.SshEnabled;
+            node.SnmpProfileId = profiles.Resolve(rec.SnmpProfile);
+            node.SshProfileId = profiles.Resolve(rec.SshProfile);
             node.UpdatedUtc = now;
             SyncTags(db, node, rec.Tags, tagCache);
         }
@@ -187,6 +196,18 @@ public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, Tim
         if (await db.Nodes.AnyAsync(n => n.Hostname == hostname && n.Id != id, cancellationToken))
         {
             return SaveResult.Fail(nameof(model.Hostname), $"A node named '{hostname}' already exists.");
+        }
+
+        foreach (var (profileId, kind, field) in new[]
+                 {
+                     (model.SnmpProfileId, CredentialKind.SnmpV3, nameof(model.SnmpProfileId)),
+                     (model.SshProfileId, CredentialKind.Ssh, nameof(model.SshProfileId)),
+                 })
+        {
+            if (profileId is not null && !await db.CredentialProfiles.AnyAsync(p => p.Id == profileId && p.Kind == kind, cancellationToken))
+            {
+                return SaveResult.Fail(field, "That credential profile no longer exists.");
+            }
         }
 
         var now = clock.GetUtcNow().UtcDateTime;
@@ -213,6 +234,8 @@ public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, Tim
         node.IcmpEnabled = model.IcmpEnabled;
         node.SnmpEnabled = model.SnmpEnabled;
         node.SshEnabled = model.SshEnabled;
+        node.SnmpProfileId = model.SnmpProfileId;
+        node.SshProfileId = model.SshProfileId;
         node.UpdatedUtc = now;
 
         var tagCache = await db.Tags.ToDictionaryAsync(t => t.Name, StringComparer.OrdinalIgnoreCase, cancellationToken);
@@ -232,7 +255,7 @@ public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, Tim
         return SaveResult.Success(node.Id);
     }
 
-    private static ImportPreview BuildPreview(NodeCsvParseResult parsed, IReadOnlyDictionary<string, Node> existing)
+    private static ImportPreview BuildPreview(NodeCsvParseResult parsed, IReadOnlyDictionary<string, Node> existing, ProfileLookup profiles)
     {
         var rows = parsed.Rows.Select(row =>
         {
@@ -242,14 +265,22 @@ public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, Tim
             }
 
             var rec = row.Record!;
+            var profileErrors = new[] { profiles.Check(rec.SnmpProfile, CredentialKind.SnmpV3), profiles.Check(rec.SshProfile, CredentialKind.Ssh) }
+                .OfType<string>()
+                .ToList();
+            if (profileErrors.Count > 0)
+            {
+                return new ImportPreviewRow(row.Line, rec.Hostname, ImportAction.Error, profileErrors);
+            }
+
             if (!existing.TryGetValue(rec.Hostname, out var node))
             {
                 return new ImportPreviewRow(row.Line, rec.Hostname, ImportAction.Create, []);
             }
 
-            return Matches(node, rec)
+            return Matches(node, rec, profiles)
                 ? new ImportPreviewRow(row.Line, rec.Hostname, ImportAction.Unchanged, [])
-                : new ImportPreviewRow(row.Line, rec.Hostname, ImportAction.Update, DescribeDiff(node, rec));
+                : new ImportPreviewRow(row.Line, rec.Hostname, ImportAction.Update, DescribeDiff(node, rec, profiles));
         }).ToList();
 
         return new ImportPreview(rows, parsed.FileErrors);
@@ -266,9 +297,9 @@ public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, Tim
         return await query.ToDictionaryAsync(n => n.Hostname, StringComparer.OrdinalIgnoreCase, cancellationToken);
     }
 
-    private static bool Matches(Node node, NodeCsvRecord rec) => DescribeDiff(node, rec).Count == 0;
+    private static bool Matches(Node node, NodeCsvRecord rec, ProfileLookup profiles) => DescribeDiff(node, rec, profiles).Count == 0;
 
-    private static List<string> DescribeDiff(Node node, NodeCsvRecord rec)
+    private static List<string> DescribeDiff(Node node, NodeCsvRecord rec, ProfileLookup profiles)
     {
         var diffs = new List<string>();
         Compare("management IP", node.ManagementIp, rec.ManagementIp);
@@ -278,6 +309,8 @@ public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, Tim
         Compare("ICMP", node.IcmpEnabled, rec.IcmpEnabled);
         Compare("SNMP", node.SnmpEnabled, rec.SnmpEnabled);
         Compare("SSH", node.SshEnabled, rec.SshEnabled);
+        Compare("SNMP profile", profiles.NameOf(node.SnmpProfileId), profiles.Canonical(rec.SnmpProfile));
+        Compare("SSH profile", profiles.NameOf(node.SshProfileId), profiles.Canonical(rec.SshProfile));
 
         var oldTags = TagNames(node);
         if (!new HashSet<string>(oldTags, StringComparer.OrdinalIgnoreCase).SetEquals(rec.Tags))
@@ -326,5 +359,41 @@ public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, Tim
         n.Tags.Select(nt => nt.Tag.Name).Order(StringComparer.OrdinalIgnoreCase).ToList();
 
     private static NodeCsvRecord ToCsvRecord(Node n) =>
-        new(n.Hostname, n.ManagementIp, n.Site, TagNames(n), n.Icon, n.Enabled, n.IcmpEnabled, n.SnmpEnabled, n.SshEnabled);
+        new(n.Hostname, n.ManagementIp, n.Site, TagNames(n), n.Icon, n.Enabled, n.IcmpEnabled, n.SnmpEnabled, n.SshEnabled,
+            n.SnmpProfile?.Name, n.SshProfile?.Name);
+
+    private static async Task<ProfileLookup> LoadProfilesAsync(YanmtDbContext db, CancellationToken cancellationToken) =>
+        new(await db.CredentialProfiles.AsNoTracking().Select(p => new ProfileRef(p.Id, p.Name, p.Kind)).ToListAsync(cancellationToken));
+
+    private sealed record ProfileRef(int Id, string Name, CredentialKind Kind);
+
+    /// <summary>Credential profiles by name (case-insensitive), for CSV import.</summary>
+    private sealed class ProfileLookup(IReadOnlyList<ProfileRef> profiles)
+    {
+        private readonly Dictionary<string, ProfileRef> _byName = profiles.ToDictionary(p => p.Name, StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<int, ProfileRef> _byId = profiles.ToDictionary(p => p.Id);
+
+        public string? Check(string? name, CredentialKind kind)
+        {
+            var column = kind == CredentialKind.Ssh ? "ssh_profile" : "snmp_profile";
+            if (name is null)
+            {
+                return null;
+            }
+
+            if (!_byName.TryGetValue(name, out var p))
+            {
+                return $"{column}: no credential profile named '{name}'. Create it under Credentials first.";
+            }
+
+            return p.Kind == kind ? null : $"{column}: '{name}' is an {p.Kind} profile.";
+        }
+
+        /// <summary>Only called after <see cref="Check"/> passed for every row.</summary>
+        public int? Resolve(string? name) => name is null ? null : _byName[name].Id;
+
+        public string? NameOf(int? id) => id is null ? null : _byId.GetValueOrDefault(id.Value)?.Name;
+
+        public string? Canonical(string? name) => name is null ? null : _byName.GetValueOrDefault(name)?.Name ?? name;
+    }
 }

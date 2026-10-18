@@ -1,7 +1,9 @@
 using Microsoft.EntityFrameworkCore;
+using Yanmt.Core.Credentials;
 using Yanmt.Core.Inventory;
 using Yanmt.Core.Status;
 using Yanmt.Infrastructure.Data.Entities;
+using Yanmt.Infrastructure.Credentials;
 using Yanmt.Infrastructure.Inventory;
 
 namespace Yanmt.Infrastructure.Tests.Inventory;
@@ -164,5 +166,81 @@ public class NodeServiceTests
         var preview = await svc.PreviewImportAsync(NodeCsv.Parse(await svc.ExportCsvAsync(Ct)), Ct);
 
         Assert.All(preview.Rows, r => Assert.Equal(ImportAction.Unchanged, r.Action));
+    }
+
+    private static async Task<(int Snmp, int Ssh)> ProfilesAsync(TestDatabase test)
+    {
+        var creds = new CredentialService(test.Factory, test.Protector, test.Clock);
+        var snmp = await creds.CreateAsync(new CredentialEditModel
+        {
+            Name = "lab-v3", Kind = CredentialKind.SnmpV3, Username = "yanmt-ro", Port = 161,
+            AuthPassword = "lab-auth-pass-01", PrivPassword = "lab-priv-pass-01",
+        }, Ct);
+        var ssh = await creds.CreateAsync(new CredentialEditModel
+        {
+            Name = "lab-ssh", Kind = CredentialKind.Ssh, Username = "yanmt", Port = 22, Password = "lab-ssh-pass-01",
+        }, Ct);
+        return (snmp.Id!.Value, ssh.Id!.Value);
+    }
+
+    [Fact]
+    public async Task Profiles_are_assigned_and_checked_by_kind()
+    {
+        await using var test = await TestDatabase.CreateAsync();
+        var (snmp, ssh) = await ProfilesAsync(test);
+        var svc = new NodeService(test.Factory, test.Clock);
+
+        var model = Model();
+        model.SnmpProfileId = snmp;
+        model.SshProfileId = ssh;
+        var created = await svc.CreateAsync(model, Ct);
+        Assert.True(created.Ok, created.Error);
+        var edit = (await svc.GetForEditAsync(created.Id!.Value, Ct))!;
+        Assert.Equal((snmp, ssh), (edit.SnmpProfileId!.Value, edit.SshProfileId!.Value));
+
+        var swapped = Model("rtr-b", "192.0.2.2");
+        swapped.SnmpProfileId = ssh; // an SSH profile in the SNMP slot
+        var wrong = await svc.CreateAsync(swapped, Ct);
+        Assert.False(wrong.Ok);
+        Assert.Equal(nameof(NodeEditModel.SnmpProfileId), wrong.Field);
+    }
+
+    [Fact]
+    public async Task Csv_import_resolves_profiles_by_name_and_export_round_trips()
+    {
+        await using var test = await TestDatabase.CreateAsync();
+        var (snmp, ssh) = await ProfilesAsync(test);
+        var svc = new NodeService(test.Factory, test.Clock);
+
+        var parsed = NodeCsv.Parse("hostname,management_ip,snmp_profile,ssh_profile\r\nrtr-a,192.0.2.1,LAB-V3,lab-ssh\r\n");
+        await svc.ApplyImportAsync(parsed, Ct);
+        var node = (await svc.ListAsync(Ct)).Single();
+        var edit = (await svc.GetForEditAsync(node.Id, Ct))!;
+        Assert.Equal((snmp, ssh), (edit.SnmpProfileId!.Value, edit.SshProfileId!.Value));
+
+        var csv = await svc.ExportCsvAsync(Ct);
+        Assert.Contains("lab-v3,lab-ssh", csv);
+        var preview = await svc.PreviewImportAsync(NodeCsv.Parse(csv), Ct);
+        Assert.All(preview.Rows, r => Assert.Equal(ImportAction.Unchanged, r.Action));
+
+        // Clearing a profile cell unassigns it, and the preview says so.
+        var cleared = await svc.PreviewImportAsync(NodeCsv.Parse("hostname,management_ip,snmp_profile,ssh_profile\r\nrtr-a,192.0.2.1,lab-v3,\r\n"), Ct);
+        Assert.Equal(ImportAction.Update, cleared.Rows[0].Action);
+        Assert.Contains(cleared.Rows[0].Messages, m => m.StartsWith("SSH profile"));
+    }
+
+    [Fact]
+    public async Task Csv_import_rejects_unknown_or_wrong_kind_profiles()
+    {
+        await using var test = await TestDatabase.CreateAsync();
+        await ProfilesAsync(test);
+        var svc = new NodeService(test.Factory, test.Clock);
+
+        var preview = await svc.PreviewImportAsync(NodeCsv.Parse(
+            "hostname,management_ip,snmp_profile,ssh_profile\r\nrtr-a,192.0.2.1,nope,\r\nrtr-b,192.0.2.2,lab-ssh,\r\n"), Ct);
+
+        Assert.False(preview.CanApply);
+        Assert.Contains("no credential profile named 'nope'", preview.Rows[0].Messages[0]);
+        Assert.Contains("is an Ssh profile", preview.Rows[1].Messages[0]);
     }
 }

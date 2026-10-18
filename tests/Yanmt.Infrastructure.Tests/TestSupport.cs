@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Yanmt.Infrastructure.Data;
+using Yanmt.Infrastructure.Security;
 
 namespace Yanmt.Infrastructure.Tests;
 
@@ -20,12 +21,18 @@ public sealed class TestDatabase : IAsyncDisposable
             .AddInterceptors(new SqlitePragmaInterceptor(), new AuditInterceptor(user, clock))
             .Options;
         Factory = new OptionsFactory(options);
+        Paths = new YanmtPaths(dir);
+        Protector = new SecretProtector(Paths, NullLogger<SecretProtector>.Instance);
     }
 
     public string Path { get; }
     public TestUser User { get; }
     public ManualClock Clock { get; }
     public IDbContextFactory<YanmtDbContext> Factory { get; }
+    public YanmtPaths Paths { get; }
+
+    /// <summary>DPAPI protector whose entropy file lives in this test's temp folder.</summary>
+    public SecretProtector Protector { get; }
 
     public static async Task<TestDatabase> CreateAsync()
     {

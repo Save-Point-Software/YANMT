@@ -32,6 +32,11 @@ public sealed class NodeEditModel : IValidatableObject
     public bool IcmpEnabled { get; set; } = true;
     public bool SnmpEnabled { get; set; }
     public bool SshEnabled { get; set; }
+    public int? SnmpProfileId { get; set; }
+    public int? SshProfileId { get; set; }
+
+    /// <summary>Read-only display: the pinned SSH host key, if any. Not saved from the form.</summary>
+    public string? SshHostKey { get; set; }
 
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
     {

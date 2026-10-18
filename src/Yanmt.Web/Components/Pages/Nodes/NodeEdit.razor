@@ -2,6 +2,7 @@
 @page "/nodes/{Id:int}"
 @attribute [Authorize(Policy = YanmtPolicies.Admin)]
 @inject NodeService Nodes
+@inject CredentialService Credentials
 @inject NavigationManager Nav
 
 <PageTitle>@(IsNew ? "Add node" : $"Edit {_originalHostname}") - YANMT</PageTitle>
@@ -70,6 +71,35 @@
                 <label><InputCheckbox @bind-Value="_model.SshEnabled" /> SSH (config backups)</label>
             </fieldset>
 
+            <div class="field-row profiles">
+                <div class="field">
+                    <label for="snmp-profile">SNMPv3 profile</label>
+                    <InputSelect id="snmp-profile" @bind-Value="_model.SnmpProfileId">
+                        <option value="">(none)</option>
+                        @foreach (var p in _snmpProfiles)
+                        {
+                            <option value="@p.Id">@p.Name</option>
+                        }
+                    </InputSelect>
+                    <ValidationMessage For="() => _model.SnmpProfileId" />
+                </div>
+                <div class="field">
+                    <label for="ssh-profile">SSH profile</label>
+                    <InputSelect id="ssh-profile" @bind-Value="_model.SshProfileId">
+                        <option value="">(none)</option>
+                        @foreach (var p in _sshProfiles)
+                        {
+                            <option value="@p.Id">@p.Name</option>
+                        }
+                    </InputSelect>
+                    <ValidationMessage For="() => _model.SshProfileId" />
+                </div>
+            </div>
+            @if (_snmpProfiles.Count == 0 || _sshProfiles.Count == 0)
+            {
+                <div class="hint">Profiles are managed under <a href="credentials">Credentials</a>.</div>
+            }
+
             @if (_error is not null)
             {
                 <p class="error">@_error</p>
@@ -95,6 +125,12 @@
                 }
             </div>
         </EditForm>
+
+        @if (!IsNew)
+        {
+            <ConnectionTests NodeId="Id!.Value" UnsavedChanges="_editContext.IsModified()" HostKey="_model.SshHostKey"
+                             HostKeyChanged="ReloadHostKeyAsync" />
+        }
     }
 </div>
 
@@ -106,6 +142,8 @@
     private ValidationMessageStore? _serverErrors;
     private List<string> _tags = [];
     private List<string> _sites = [];
+    private List<CredentialOption> _snmpProfiles = [];
+    private List<CredentialOption> _sshProfiles = [];
     private string? _originalHostname;
     private string? _error;
     private bool _notFound;
@@ -118,6 +156,8 @@
     {
         _tags = await Nodes.AllTagsAsync();
         _sites = await Nodes.AllSitesAsync();
+        _snmpProfiles = await Credentials.OptionsAsync(CredentialKind.SnmpV3);
+        _sshProfiles = await Credentials.OptionsAsync(CredentialKind.Ssh);
         _model = IsNew ? new NodeEditModel() : await Nodes.GetForEditAsync(Id!.Value);
         _notFound = _model is null;
         _originalHostname = _model?.Hostname;
@@ -157,6 +197,12 @@
         {
             _busy = false;
         }
+    }
+
+    private async Task ReloadHostKeyAsync()
+    {
+        var saved = await Nodes.GetForEditAsync(Id!.Value);
+        _model!.SshHostKey = saved?.SshHostKey;
     }
 
     private async Task DeleteAsync()

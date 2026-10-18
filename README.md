@@ -8,7 +8,7 @@ nodes whose colors come from ICMP, SNMPv3, and user-defined monitors, with drill
 > to an allowlist of `show` commands enforced in code and by tests; SNMP is GET/GETNEXT/GETBULK/WALK
 > only, with no SET code path at all.
 
-**Status:** under development, phase 1a of 6 (skeleton, hosting, auth, inventory). See
+**Status:** under development, phase 1b of 6 (inventory, credential profiles, Test Connection, read-only guards). See
 [`docs/SPEC.md`](docs/SPEC.md) for the full v1 scope.
 
 ## Requirements
@@ -43,6 +43,27 @@ someone's group membership, they must sign out of Windows and back in to get a f
 Operational settings (status colors now; intervals, thresholds, and retention in later phases) are
 edited in the UI and stored in the database. Every change is audited.
 
+### Credentials
+
+SSH and SNMPv3 credentials live in reusable **credential profiles** (admin only, under
+*Credentials*). Passwords are encrypted with DPAPI in machine scope plus extra entropy from
+`<DataPath>\secrets.entropy`. That file is created on first start, readable only by the service
+account, SYSTEM, and Administrators. Passwords are never shown again after saving, never logged, and
+never written to the audit log. **Back up `secrets.entropy` together with `yanmt.db`.** Without it, or
+on a different server, stored passwords can't be decrypted. The profile page says so, and you
+re-enter them (a passphrase export/import arrives in phase 6).
+
+- **SNMPv3:** authPriv only, SHA-256/384/512 auth, AES-128/192/256 privacy. YANMT verifies the HMAC
+  of every response itself, because SharpSnmpLib doesn't.
+- **SSH:** username and password for a plain privilege-15 local user. The SSH host key is pinned on the
+  first successful connection (trust on first use). A later mismatch is refused until an admin trusts
+  the new key from the node page.
+
+Assign profiles on a node's edit page, or with the `snmp_profile` / `ssh_profile` CSV columns (profile
+names; blank means none). The node page has **Test ICMP / SNMP / SSH** buttons that report a specific
+cause: timeout, port unreachable, unknown user, wrong auth or privacy password, missing SNMP view,
+unsupported SSH algorithm, host key changed, and so on.
+
 Logs go to `<DataPath>\logs\yanmt-yyyyMMdd.log`. Service-level errors also go to the Windows
 Application event log under source `YANMT`, once the installer registers that source.
 
@@ -51,8 +72,36 @@ Application event log under source `YANMT`, once the installer registers that so
 See [CONTRIBUTING.md](CONTRIBUTING.md) for dev-machine setup (SDK, gitleaks, hooks, dev certificate,
 local role groups) and how to run and test.
 
-The full Windows Server install guide, the custom-monitor guide, and the CML lab setup arrive in
-later phases (see the spec).
+The full Windows Server install guide and the custom-monitor guide arrive in later phases (see the spec).
+
+## CML lab setup (so far)
+
+Any IOS-XE 17.x node reachable from the YANMT host works. Minimal config:
+
+```
+! SSH for YANMT: a plain privilege-15 local user, no parser view and no enable.
+! YANMT's command allowlist is the read-only enforcement.
+ip domain name lab.example
+crypto key generate rsa modulus 3072
+ip ssh version 2
+username yanmt privilege 15 algorithm-type scrypt secret <ssh-password>
+line vty 0 4
+ login local
+ transport input ssh
+!
+! SNMPv3 authPriv with a read-only view (no write view on the group)
+snmp-server view YANMT-RO iso included
+snmp-server group YANMT-RO v3 priv read YANMT-RO
+snmp-server user yanmt-ro-a128 YANMT-RO v3 auth sha-2 256 <auth-password> priv aes 128 <priv-password>
+snmp-server user yanmt-ro-a256 YANMT-RO v3 auth sha-2 256 <auth-password> priv aes 256 <priv-password>
+```
+
+The SHA-2 keyword differs between IOS-XE releases. Check `snmp-server user x YANMT-RO v3 auth ?` on
+your image. SNMPv3 passwords must be at least 8 characters. `snmp-server user` lines don't appear in
+`show running-config`; check them with `show snmp user`.
+
+To run the opt-in integration tests, copy `tests/lab.example.json` to `tests/lab.json` (gitignored),
+fill in node addresses and the lab credentials, then run `dotnet test --project tests/Yanmt.Integration.Tests`.
 
 ## License
 
