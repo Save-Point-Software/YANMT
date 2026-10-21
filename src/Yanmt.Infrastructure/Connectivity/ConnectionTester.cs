@@ -25,7 +25,7 @@ namespace Yanmt.Infrastructure.Connectivity;
 public sealed class ConnectionTester(
     IDbContextFactory<YanmtDbContext> dbFactory,
     CredentialService credentials,
-    IcmpProbe icmp,
+    IIcmpProbe icmp,
     ISnmpReader snmp,
     ReadOnlySshCollector ssh,
     ILogger<ConnectionTester> logger)

@@ -160,6 +160,164 @@ namespace Yanmt.Infrastructure.Data.Migrations
                     b.ToTable("Events");
                 });
 
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.IcmpSample", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<double?>("AvgMs")
+                        .HasColumnType("REAL");
+
+                    b.Property<double>("LossPercent")
+                        .HasColumnType("REAL");
+
+                    b.Property<double?>("MaxMs")
+                        .HasColumnType("REAL");
+
+                    b.Property<double?>("MinMs")
+                        .HasColumnType("REAL");
+
+                    b.Property<int>("NodeId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Received")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Sent")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("TimestampUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NodeId", "TimestampUtc");
+
+                    b.ToTable("IcmpSamples");
+                });
+
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.Map", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("BackgroundImage")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Height")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT")
+                        .UseCollation("NOCASE");
+
+                    b.Property<int?>("ParentMapId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Width")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Name")
+                        .IsUnique();
+
+                    b.HasIndex("ParentMapId");
+
+                    b.ToTable("Maps");
+                });
+
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.MapElement", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LabelSourceKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LabelSourceType")
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("MapId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("NodeId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("TargetMapId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<double>("X")
+                        .HasColumnType("REAL");
+
+                    b.Property<double>("Y")
+                        .HasColumnType("REAL");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NodeId");
+
+                    b.HasIndex("TargetMapId");
+
+                    b.HasIndex("MapId", "NodeId")
+                        .IsUnique();
+
+                    b.HasIndex("MapId", "TargetMapId")
+                        .IsUnique();
+
+                    b.ToTable("MapElements");
+                });
+
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.MapLink", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("FromElementId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Label")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("MapId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ToElementId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FromElementId");
+
+                    b.HasIndex("ToElementId");
+
+                    b.HasIndex("MapId", "FromElementId", "ToElementId")
+                        .IsUnique();
+
+                    b.ToTable("MapLinks");
+                });
+
             modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.Node", b =>
                 {
                     b.Property<int>("Id")
@@ -351,6 +509,79 @@ namespace Yanmt.Infrastructure.Data.Migrations
                     b.Navigation("Node");
                 });
 
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.IcmpSample", b =>
+                {
+                    b.HasOne("Yanmt.Infrastructure.Data.Entities.Node", "Node")
+                        .WithMany()
+                        .HasForeignKey("NodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Node");
+                });
+
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.Map", b =>
+                {
+                    b.HasOne("Yanmt.Infrastructure.Data.Entities.Map", "ParentMap")
+                        .WithMany()
+                        .HasForeignKey("ParentMapId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("ParentMap");
+                });
+
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.MapElement", b =>
+                {
+                    b.HasOne("Yanmt.Infrastructure.Data.Entities.Map", "Map")
+                        .WithMany("Elements")
+                        .HasForeignKey("MapId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Yanmt.Infrastructure.Data.Entities.Node", "Node")
+                        .WithMany()
+                        .HasForeignKey("NodeId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("Yanmt.Infrastructure.Data.Entities.Map", "TargetMap")
+                        .WithMany()
+                        .HasForeignKey("TargetMapId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.Navigation("Map");
+
+                    b.Navigation("Node");
+
+                    b.Navigation("TargetMap");
+                });
+
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.MapLink", b =>
+                {
+                    b.HasOne("Yanmt.Infrastructure.Data.Entities.MapElement", "From")
+                        .WithMany()
+                        .HasForeignKey("FromElementId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Yanmt.Infrastructure.Data.Entities.Map", "Map")
+                        .WithMany("Links")
+                        .HasForeignKey("MapId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Yanmt.Infrastructure.Data.Entities.MapElement", "To")
+                        .WithMany()
+                        .HasForeignKey("ToElementId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("From");
+
+                    b.Navigation("Map");
+
+                    b.Navigation("To");
+                });
+
             modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.Node", b =>
                 {
                     b.HasOne("Yanmt.Infrastructure.Data.Entities.CredentialProfile", "SnmpProfile")
@@ -396,6 +627,13 @@ namespace Yanmt.Infrastructure.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("Node");
+                });
+
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.Map", b =>
+                {
+                    b.Navigation("Elements");
+
+                    b.Navigation("Links");
                 });
 
             modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.Node", b =>

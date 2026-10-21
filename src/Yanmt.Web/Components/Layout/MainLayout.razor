@@ -1,8 +1,10 @@
 ﻿@inherits LayoutComponentBase
 
 <header class="topbar">
-    <a class="brand" href="nodes">YANMT</a>
+    <a class="brand" href="">YANMT</a>
     <nav>
+        <NavLink href="" Match="NavLinkMatch.All">Map</NavLink>
+        <NavLink href="maps">Maps</NavLink>
         <NavLink href="nodes">Nodes</NavLink>
         <NavLink href="settings">Settings</NavLink>
         <AuthorizeView Policy="@YanmtPolicies.Admin">

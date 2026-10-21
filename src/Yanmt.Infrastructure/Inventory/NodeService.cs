@@ -5,11 +5,15 @@ using Yanmt.Core.Inventory;
 using Yanmt.Core.Status;
 using Yanmt.Infrastructure.Data;
 using Yanmt.Infrastructure.Data.Entities;
+using Yanmt.Infrastructure.Monitoring;
 
 namespace Yanmt.Infrastructure.Inventory;
 
-/// <summary>Node inventory: CRUD, tags, and CSV import/export. All writes go through the audit interceptor.</summary>
-public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, TimeProvider clock)
+/// <summary>
+/// Node inventory: CRUD, tags, and CSV import/export. All writes go through the audit interceptor
+/// and signal the pollers to pick up the change.
+/// </summary>
+public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, TimeProvider clock, InventoryChangeSignal? signal = null)
 {
     public async Task<List<NodeListItem>> ListAsync(CancellationToken cancellationToken = default)
     {
@@ -40,6 +44,34 @@ public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, Tim
                 n.SshEnabled,
                 n.Enabled ? stateByNode.GetValueOrDefault(n.Id, Severity.Unknown) : Severity.Unknown))
             .ToList();
+    }
+
+    /// <summary>One node's summary (state comes from the DB; pages overlay live state from StatusCache).</summary>
+    public async Task<NodeListItem?> GetAsync(int id, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var n = await db.Nodes.AsNoTracking()
+            .Include(x => x.Tags).ThenInclude(nt => nt.Tag)
+            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+        if (n is null)
+        {
+            return null;
+        }
+
+        var states = await db.StatusSources.AsNoTracking().Where(s => s.NodeId == id && s.Enabled).Select(s => s.State).ToListAsync(cancellationToken);
+        return new NodeListItem(n.Id, n.Hostname, n.ManagementIp, n.Site, TagNames(n), n.Icon, n.Enabled, n.IcmpEnabled, n.SnmpEnabled,
+            n.SshEnabled, n.Enabled ? StatusRollup.Worst(states) : Severity.Unknown);
+    }
+
+    public async Task<List<NodeEventItem>> RecentEventsAsync(int nodeId, int count, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        return await db.Events.AsNoTracking()
+            .Where(e => e.NodeId == nodeId)
+            .OrderByDescending(e => e.TimestampUtc).ThenByDescending(e => e.Id)
+            .Take(count)
+            .Select(e => new NodeEventItem(e.TimestampUtc, e.Source, e.OldState, e.NewState, e.Message))
+            .ToListAsync(cancellationToken);
     }
 
     public async Task<NodeEditModel?> GetForEditAsync(int id, CancellationToken cancellationToken = default)
@@ -102,6 +134,7 @@ public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, Tim
         db.Nodes.Remove(node);
         await db.SaveChangesAsync(cancellationToken);
         await PruneOrphanTagsAsync(db, cancellationToken);
+        signal?.Notify();
         return true;
     }
 
@@ -181,6 +214,7 @@ public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, Tim
         await db.SaveChangesAsync(cancellationToken);
         await PruneOrphanTagsAsync(db, cancellationToken);
         await tx.CommitAsync(cancellationToken);
+        signal?.Notify();
         return new ImportResult(created, updated, unchanged);
     }
 
@@ -252,6 +286,7 @@ public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, Tim
         }
 
         await PruneOrphanTagsAsync(db, cancellationToken);
+        signal?.Notify();
         return SaveResult.Success(node.Id);
     }
 

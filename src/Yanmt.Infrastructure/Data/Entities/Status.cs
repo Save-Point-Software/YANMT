@@ -37,6 +37,21 @@ public class StatusSource
     public int PendingCount { get; set; }
 }
 
+/// <summary>One ICMP poll of one node. Latencies are null when no echo was answered.</summary>
+public class IcmpSample
+{
+    public long Id { get; set; }
+    public int NodeId { get; set; }
+    public Node Node { get; set; } = null!;
+    public DateTime TimestampUtc { get; set; }
+    public int Sent { get; set; }
+    public int Received { get; set; }
+    public double? MinMs { get; set; }
+    public double? AvgMs { get; set; }
+    public double? MaxMs { get; set; }
+    public double LossPercent { get; set; }
+}
+
 /// <summary>A state change from any source. Acknowledgement and the event UI arrive in Phase 6.</summary>
 public class Event
 {

@@ -9,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting.WindowsServices;
 using Yanmt.Infrastructure;
 using Yanmt.Infrastructure.Data;
+using Yanmt.Infrastructure.Monitoring;
 using Yanmt.Infrastructure.Security;
 using Yanmt.Web.Components;
 using Yanmt.Web.Endpoints;
@@ -82,6 +83,8 @@ try
 
     builder.Services.AddScoped<ICurrentUser, WebCurrentUser>();
     builder.Services.AddYanmtInfrastructure(paths);
+    builder.Services.Configure<PollingOptions>(builder.Configuration.GetSection(PollingOptions.SectionName));
+    builder.Services.AddYanmtMonitoring();
 
     builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 
@@ -122,6 +125,7 @@ try
 
     app.MapStaticAssets();
     app.MapNodeExport();
+    app.MapMapBackground();
     app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 
     await app.RunAsync();

@@ -1,6 +1,10 @@
 @page "/nodes"
+@using Yanmt.Infrastructure.Monitoring
+@implements IDisposable
 @inject NodeService Nodes
 @inject SettingsService Settings
+@inject StatusCache Status
+@inject StatusBroadcaster Broadcaster
 
 <PageTitle>Nodes - YANMT</PageTitle>
 
@@ -52,11 +56,11 @@ else
                 @foreach (var n in Filtered)
                 {
                     <tr class="@(n.Enabled ? null : "disabled")" @key="n.Id">
-                        <td class="col-state"><StateDot State="n.State" Colors="_colors" /></td>
+                        <td class="col-state"><StateDot State="LiveState(n)" Colors="_colors" /></td>
                         <td>
+                            <a href="nodes/@n.Id/view">@n.Hostname</a>
                             <AuthorizeView Policy="@YanmtPolicies.Admin">
-                                <Authorized><a href="nodes/@n.Id">@n.Hostname</a></Authorized>
-                                <NotAuthorized>@n.Hostname</NotAuthorized>
+                                <a class="edit-link" href="nodes/@n.Id">edit</a>
                             </AuthorizeView>
                             @if (!n.Enabled)
                             {
@@ -101,5 +105,19 @@ else
     {
         _colors = await Settings.GetAsync(SettingKeys.StatusColors);
         _nodes = await Nodes.ListAsync();
+        Broadcaster.Changed += OnStatusChanged;
     }
+
+    // Live state from the poller; the DB state from load is the fallback until the cache has the node.
+    private Severity LiveState(NodeListItem n) => Status.Get(n.Id)?.State ?? n.State;
+
+    private void OnStatusChanged(IReadOnlyCollection<int> ids)
+    {
+        if (_nodes?.Any(n => ids.Contains(n.Id)) == true)
+        {
+            _ = InvokeAsync(StateHasChanged);
+        }
+    }
+
+    public void Dispose() => Broadcaster.Changed -= OnStatusChanged;
 }

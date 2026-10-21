@@ -1,0 +1,139 @@
+@page "/maps"
+@using Yanmt.Core.Maps
+@using Yanmt.Infrastructure.Maps
+@using Yanmt.Infrastructure.Monitoring
+@implements IDisposable
+@inject MapService Maps
+@inject StatusCache Status
+@inject StatusBroadcaster Broadcaster
+@inject SettingsService Settings
+@inject NavigationManager Nav
+
+<PageTitle>Maps - YANMT</PageTitle>
+
+<div class="page-header">
+    <h1>Maps</h1>
+    <AuthorizeView Policy="@YanmtPolicies.Admin">
+        <div class="actions inline">
+            <input @bind="_newName" placeholder="New top-level map" maxlength="@MapRules.MaxNameLength" aria-label="New map name" />
+            <button class="btn primary" @onclick="CreateAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_newName))">Create map</button>
+        </div>
+    </AuthorizeView>
+</div>
+
+@if (_error is not null)
+{
+    <p class="error">@_error</p>
+}
+
+@if (_maps is null)
+{
+    <p class="muted">Loading…</p>
+}
+else
+{
+    <div class="table-wrap">
+        <table class="grid">
+            <thead>
+                <tr>
+                    <th class="col-state" aria-label="State"></th>
+                    <th>Map</th>
+                    <th>Parent</th>
+                    <th>Nodes</th>
+                    <th>Submaps</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var m in _maps)
+                {
+                    var state = MapService.SubmapState(_contents, m.Id, Status.StateOf);
+                    <tr @key="m.Id">
+                        <td class="col-state"><StateDot State="state" Colors="_colors" /></td>
+                        <td>
+                            <a href="maps/@m.Id">@m.Name</a>
+                            @if (m.Id == _homeId)
+                            {
+                                <span class="pill">home</span>
+                            }
+                        </td>
+                        <td>@(m.ParentMapId is { } p ? _maps.FirstOrDefault(x => x.Id == p)?.Name : "")</td>
+                        <td>@m.NodeCount</td>
+                        <td>@m.SubmapCount</td>
+                        <td class="row-actions">
+                            <AuthorizeView Policy="@YanmtPolicies.Admin">
+                                @if (m.Id != _homeId)
+                                {
+                                    @if (_confirmDelete == m.Id)
+                                    {
+                                        <span>Delete @m.Name and its icons and links?</span>
+                                        <button class="btn danger" @onclick="() => DeleteAsync(m.Id)" disabled="@_busy">Yes, delete</button>
+                                        <button class="btn" @onclick="() => _confirmDelete = null">Keep</button>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn link" @onclick="() => _confirmDelete = m.Id">Delete…</button>
+                                    }
+                                }
+                            </AuthorizeView>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    <p class="muted">A map's state is the worst state of the enabled nodes on it and on its submaps. Disabled nodes don't count.</p>
+}
+
+@code {
+    private List<MapSummary>? _maps;
+    private IReadOnlyDictionary<int, MapContents> _contents = new Dictionary<int, MapContents>();
+    private StatusColors _colors = StatusColors.Default;
+    private int _homeId;
+    private string? _newName;
+    private string? _error;
+    private bool _busy;
+    private int? _confirmDelete;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _colors = await Settings.GetAsync(SettingKeys.StatusColors);
+        await LoadAsync();
+        Broadcaster.Changed += OnStatusChanged;
+    }
+
+    private async Task LoadAsync()
+    {
+        _homeId = await Maps.GetHomeMapIdAsync();
+        _maps = await Maps.ListAsync();
+        _contents = await Maps.RollupContentsAsync();
+    }
+
+    private void OnStatusChanged(IReadOnlyCollection<int> nodeIds) => _ = InvokeAsync(StateHasChanged);
+
+    private async Task CreateAsync()
+    {
+        _busy = true;
+        var result = await Maps.CreateAsync(_newName ?? "", null);
+        _busy = false;
+        if (!result.Ok)
+        {
+            _error = result.Error;
+            return;
+        }
+
+        Nav.NavigateTo($"maps/{result.Id}");
+    }
+
+    private async Task DeleteAsync(int id)
+    {
+        _busy = true;
+        var result = await Maps.DeleteAsync(id);
+        _error = result.Ok ? null : result.Error;
+        _confirmDelete = null;
+        await LoadAsync();
+        _busy = false;
+    }
+
+    public void Dispose() => Broadcaster.Changed -= OnStatusChanged;
+}

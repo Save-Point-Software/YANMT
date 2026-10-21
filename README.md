@@ -8,7 +8,7 @@ nodes whose colors come from ICMP, SNMPv3, and user-defined monitors, with drill
 > to an allowlist of `show` commands enforced in code and by tests; SNMP is GET/GETNEXT/GETBULK/WALK
 > only, with no SET code path at all.
 
-**Status:** under development, phase 1b of 6 (inventory, credential profiles, Test Connection, read-only guards). See
+**Status:** under development, phase 2 of 6 (inventory, credentials, Test Connection, ICMP polling, and the live map). See
 [`docs/SPEC.md`](docs/SPEC.md) for the full v1 scope.
 
 ## Requirements
@@ -40,8 +40,45 @@ servers that aren't domain-joined; users then sign in with local accounts over N
 resolved to SIDs at startup, and anything that doesn't resolve is logged as an error. After changing
 someone's group membership, they must sign out of Windows and back in to get a fresh token.
 
-Operational settings (status colors now; intervals, thresholds, and retention in later phases) are
-edited in the UI and stored in the database. Every change is audited.
+Operational settings (status colors and ICMP polling now; SNMP intervals, thresholds, and retention
+in later phases) are edited in the UI and stored in the database. Every change is audited, and the
+pollers pick up a change within a few seconds.
+
+Bootstrap polling limits live in `appsettings.json` under `Yanmt:Polling`: `IcmpConcurrency`
+(bursts in flight at once, default 32) and `ReloadSeconds` (how often targets are re-read even
+without a change, default 300).
+
+### ICMP polling
+
+Every enabled node with ICMP on gets a burst of echoes each interval (defaults: 4 echoes, 2 s
+timeout, every 60 s).
+
+- **Warning:** loss at or above the loss threshold (default 50%), or average latency at or above the
+  latency threshold (default 150 ms). This applies straight away.
+- **No reply at all:** Warning first, then **Critical** after the configured number of consecutive
+  failed polls (default 3), so one lost burst doesn't flap the map. Any reply clears the count, and
+  recovery is immediate.
+- **Unknown:** no data yet, or the poll itself failed on the YANMT host.
+
+State changes go to the event log; the event UI arrives in phase 6, and each node's page shows its
+recent events. Samples are stored for the charts in phase 3. Retention cleanup also arrives in
+phase 6, so until then `IcmpSamples` grows by about 288,000 rows a day per 200 nodes.
+
+### Map
+
+`/` shows the home map (the oldest top-level map, created as "Network" on first visit). Viewers can
+pan (drag), zoom (wheel or +/−), and click: a node opens its page, and a submap opens that map. Admins
+choose **Edit map** to:
+
+- place nodes and submaps (new or existing maps), drag them, and draw links between icons;
+- choose a value to show under a node's name (ICMP latency for now);
+- upload a PNG, JPEG, or GIF background (up to 10 MB). The canvas takes the image's size. SVG isn't
+  accepted, because it's served from YANMT's own origin and could carry script.
+
+A node's color is the worst state of its enabled sources; a disabled node is gray. A submap shows the
+worst state of the enabled nodes inside it, recursively. Disabled nodes don't count, so an
+intentionally unmonitored box doesn't gray out a site. States update live, with no refresh. Map
+structure edits by another admin show up on the next page load.
 
 ### Credentials
 

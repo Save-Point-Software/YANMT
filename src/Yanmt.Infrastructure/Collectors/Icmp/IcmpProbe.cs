@@ -9,8 +9,14 @@ public sealed record IcmpResult(int Sent, int Received, double? MinMs, double? A
     public double LossPercent => Sent == 0 ? 100 : 100.0 * (Sent - Received) / Sent;
 }
 
+/// <summary>Sends a burst of ICMP echoes. Abstracted so the poller can be tested without a network.</summary>
+public interface IIcmpProbe
+{
+    Task<IcmpResult> ProbeAsync(IPAddress address, int count, TimeSpan timeout, TimeSpan spacing, CancellationToken cancellationToken = default);
+}
+
 /// <summary>ICMP echo via the built-in <see cref="Ping"/> (no admin rights needed).</summary>
-public sealed class IcmpProbe
+public sealed class IcmpProbe : IIcmpProbe
 {
     private static readonly byte[] Payload = new byte[32];
 

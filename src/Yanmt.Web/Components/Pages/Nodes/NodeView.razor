@@ -1,0 +1,140 @@
+@page "/nodes/{Id:int}/view"
+@using Yanmt.Infrastructure.Data.Entities
+@using Yanmt.Infrastructure.Monitoring
+@implements IDisposable
+@inject NodeService Nodes
+@inject StatusCache Status
+@inject StatusBroadcaster Broadcaster
+@inject SettingsService Settings
+
+@* Minimal node page for Phase 2 (state, sources, recent events). The full drill-down arrives in Phase 3. *@
+
+<PageTitle>@(_node?.Hostname ?? "Node") - YANMT</PageTitle>
+
+<div class="page narrow">
+    <p><a href="">← Map</a> · <a href="nodes">Nodes</a></p>
+
+    @if (_notFound)
+    {
+        <p class="error">Node @Id does not exist (it may have been deleted).</p>
+    }
+    else if (_node is not null)
+    {
+        var live = Status.Get(_node.Id);
+        var state = live?.State ?? _node.State;
+        <div class="page-header">
+            <h1><StateDot State="state" Colors="_colors" /> @_node.Hostname</h1>
+            <AuthorizeView Policy="@YanmtPolicies.Admin">
+                <div class="actions"><a class="btn" href="nodes/@_node.Id">Edit node</a></div>
+            </AuthorizeView>
+        </div>
+
+        <dl class="details">
+            <dt>State</dt>
+            <dd>@(_node.Enabled ? state.ToString() : "Unknown (node disabled)")</dd>
+            <dt>Management IP</dt>
+            <dd class="mono">@_node.ManagementIp</dd>
+            @if (!string.IsNullOrEmpty(_node.Site))
+            {
+                <dt>Site</dt>
+                <dd>@_node.Site</dd>
+            }
+            @if (_node.Tags.Count > 0)
+            {
+                <dt>Tags</dt>
+                <dd>@foreach (var t in _node.Tags) { <span class="pill">@t</span> }</dd>
+            }
+        </dl>
+
+        <section class="card">
+            <h2>Status sources</h2>
+            @if (live is null || live.Sources.Count == 0)
+            {
+                <p class="muted">
+                    @(!_node.Enabled ? "The node is disabled, so nothing is polled."
+                      : _node.IcmpEnabled ? "No results yet. The first ICMP poll runs within a minute of enabling."
+                      : "Nothing is polled for this node yet (ICMP is off; SNMP stats arrive in Phase 3).")
+                </p>
+            }
+            else
+            {
+                <table class="grid">
+                    <thead><tr><th class="col-state"></th><th>Source</th><th>Value</th><th>Since (UTC)</th></tr></thead>
+                    <tbody>
+                        @foreach (var s in live.Sources)
+                        {
+                            <tr>
+                                <td class="col-state"><StateDot State="s.State" Colors="_colors" /></td>
+                                <td>@(s.Type == StatusSourceType.Icmp ? "ICMP" : s.Type.ToString()) @s.Key</td>
+                                <td class="mono">@s.ValueText</td>
+                                <td class="mono nowrap">@s.SinceUtc.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>
+
+        <section class="card">
+            <h2>Recent events</h2>
+            @if (_events.Count == 0)
+            {
+                <p class="muted">No state changes recorded.</p>
+            }
+            else
+            {
+                <table class="grid">
+                    <thead><tr><th>Time (UTC)</th><th class="col-state"></th><th>Event</th></tr></thead>
+                    <tbody>
+                        @foreach (var e in _events)
+                        {
+                            <tr>
+                                <td class="mono nowrap">@e.TimestampUtc.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                <td class="col-state"><StateDot State="e.NewState" Colors="_colors" /></td>
+                                <td>@e.Message</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>
+    }
+</div>
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private NodeListItem? _node;
+    private List<NodeEventItem> _events = [];
+    private StatusColors _colors = StatusColors.Default;
+    private bool _notFound;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _colors = await Settings.GetAsync(SettingKeys.StatusColors);
+        Broadcaster.Changed += OnStatusChanged;
+    }
+
+    protected override async Task OnParametersSetAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _node = await Nodes.GetAsync(Id);
+        _notFound = _node is null;
+        _events = _node is null ? [] : await Nodes.RecentEventsAsync(Id, 20);
+    }
+
+    private void OnStatusChanged(IReadOnlyCollection<int> ids)
+    {
+        if (ids.Contains(Id))
+        {
+            _ = InvokeAsync(async () =>
+            {
+                _events = await Nodes.RecentEventsAsync(Id, 20);
+                StateHasChanged();
+            });
+        }
+    }
+
+    public void Dispose() => Broadcaster.Changed -= OnStatusChanged;
+}

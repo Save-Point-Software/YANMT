@@ -1,8 +1,10 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Yanmt.Core.Monitoring;
 using Yanmt.Core.Status;
 using Yanmt.Infrastructure.Data;
 using Yanmt.Infrastructure.Data.Entities;
+using Yanmt.Infrastructure.Monitoring;
 
 namespace Yanmt.Infrastructure.Settings;
 
@@ -12,10 +14,14 @@ public sealed record SettingKey<T>(string Key, T Default);
 public static class SettingKeys
 {
     public static readonly SettingKey<StatusColors> StatusColors = new("status.colors", Core.Status.StatusColors.Default);
+    public static readonly SettingKey<IcmpSettings> Icmp = new("polling.icmp", new IcmpSettings());
 }
 
-/// <summary>Reads and writes operational settings (the DB "Setting" table). Writes are audited.</summary>
-public sealed class SettingsService(IDbContextFactory<YanmtDbContext> dbFactory, TimeProvider clock)
+/// <summary>
+/// Reads and writes operational settings (the DB "Setting" table). Writes are audited, and signal
+/// the pollers so a changed interval or threshold applies on the next tick.
+/// </summary>
+public sealed class SettingsService(IDbContextFactory<YanmtDbContext> dbFactory, TimeProvider clock, InventoryChangeSignal? signal = null)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -54,5 +60,6 @@ public sealed class SettingsService(IDbContextFactory<YanmtDbContext> dbFactory,
         }
 
         await db.SaveChangesAsync(cancellationToken);
+        signal?.Notify();
     }
 }

@@ -1,4 +1,5 @@
 @page "/settings"
+@using Yanmt.Core.Monitoring
 @inject SettingsService Settings
 @inject AuthenticationStateProvider Auth
 
@@ -40,7 +41,62 @@
         }
     </section>
 
-    <p class="muted">Polling intervals, thresholds and retention settings are added here in later phases.</p>
+    <section class="card">
+        <h2>ICMP polling</h2>
+        <p class="muted">
+            Every enabled node with ICMP on gets a burst of echoes each interval. Loss or latency over a threshold is
+            Warning straight away. No reply at all shows Warning first and goes Critical after the set number of
+            consecutive failed polls, so one lost burst doesn't flap the map.
+        </p>
+
+        <div class="field-row">
+            <div class="field narrow-field">
+                <label for="icmp-interval">Interval (s)</label>
+                <input id="icmp-interval" type="number" @bind="_icmp.IntervalSeconds" disabled="@(!_isAdmin)" />
+            </div>
+            <div class="field narrow-field">
+                <label for="icmp-count">Echoes per poll</label>
+                <input id="icmp-count" type="number" @bind="_icmp.EchoCount" disabled="@(!_isAdmin)" />
+            </div>
+            <div class="field narrow-field">
+                <label for="icmp-timeout">Timeout per echo (ms)</label>
+                <input id="icmp-timeout" type="number" @bind="_icmp.TimeoutMs" disabled="@(!_isAdmin)" />
+            </div>
+        </div>
+        <div class="field-row">
+            <div class="field narrow-field">
+                <label for="icmp-loss">Warning at loss (%)</label>
+                <input id="icmp-loss" type="number" step="any" @bind="_icmp.WarningLossPercent" disabled="@(!_isAdmin)" />
+            </div>
+            <div class="field narrow-field">
+                <label for="icmp-latency">Warning at average latency (ms)</label>
+                <input id="icmp-latency" type="number" step="any" @bind="_icmp.WarningLatencyMs" disabled="@(!_isAdmin)" />
+            </div>
+            <div class="field narrow-field">
+                <label for="icmp-failures">Failed polls before Critical</label>
+                <input id="icmp-failures" type="number" @bind="_icmp.FailuresBeforeCritical" disabled="@(!_isAdmin)" />
+            </div>
+        </div>
+
+        @foreach (var (_, error) in _icmpErrors)
+        {
+            <p class="error">@error</p>
+        }
+
+        @if (_isAdmin)
+        {
+            <div class="form-actions">
+                <button class="btn primary" @onclick="SaveIcmpAsync">Save ICMP settings</button>
+                <button class="btn" @onclick="() => { _icmp = new IcmpForm(new IcmpSettings()); _icmpSaved = false; }">Reset to defaults</button>
+                @if (_icmpSaved)
+                {
+                    <span class="success">Saved. Pollers pick it up within a few seconds.</span>
+                }
+            </div>
+        }
+    </section>
+
+    <p class="muted">SNMP intervals, CPU/memory thresholds and retention settings are added here in later phases.</p>
 </div>
 
 @code {
@@ -62,6 +118,46 @@
         var state = await Auth.GetAuthenticationStateAsync();
         _isAdmin = state.User.IsInRole(YanmtRoles.Admin);
         Load(await Settings.GetAsync(SettingKeys.StatusColors));
+        _icmp = new IcmpForm(await Settings.GetAsync(SettingKeys.Icmp));
+    }
+
+    private IcmpForm _icmp = new(new IcmpSettings());
+    private IReadOnlyList<(string Field, string Error)> _icmpErrors = [];
+    private bool _icmpSaved;
+
+    private async Task SaveIcmpAsync()
+    {
+        _icmpSaved = false;
+        var settings = _icmp.ToSettings();
+        _icmpErrors = settings.Validate();
+        if (!_isAdmin || _icmpErrors.Count > 0)
+        {
+            return;
+        }
+
+        await Settings.SetAsync(SettingKeys.Icmp, settings);
+        _icmpSaved = true;
+    }
+
+    /// <summary>Mutable copy for binding; IcmpSettings itself is immutable.</summary>
+    private sealed class IcmpForm(IcmpSettings s)
+    {
+        public int IntervalSeconds { get; set; } = s.IntervalSeconds;
+        public int EchoCount { get; set; } = s.EchoCount;
+        public int TimeoutMs { get; set; } = s.TimeoutMs;
+        public double WarningLossPercent { get; set; } = s.WarningLossPercent;
+        public double WarningLatencyMs { get; set; } = s.WarningLatencyMs;
+        public int FailuresBeforeCritical { get; set; } = s.FailuresBeforeCritical;
+
+        public IcmpSettings ToSettings() => new()
+        {
+            IntervalSeconds = IntervalSeconds,
+            EchoCount = EchoCount,
+            TimeoutMs = TimeoutMs,
+            WarningLossPercent = WarningLossPercent,
+            WarningLatencyMs = WarningLatencyMs,
+            FailuresBeforeCritical = FailuresBeforeCritical,
+        };
     }
 
     private void Load(StatusColors c) => _colors = new()

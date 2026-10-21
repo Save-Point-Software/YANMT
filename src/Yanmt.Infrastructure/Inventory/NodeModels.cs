@@ -17,6 +17,9 @@ public sealed record NodeListItem(
     bool SshEnabled,
     Severity State);
 
+/// <summary>A recorded state change, for a node's recent-events list (the full event log arrives in Phase 6).</summary>
+public sealed record NodeEventItem(DateTime TimestampUtc, Data.Entities.StatusSourceType Source, Severity? OldState, Severity NewState, string Message);
+
 /// <summary>Form model for creating or editing a node. Validation reuses <see cref="NodeRules"/>.</summary>
 public sealed class NodeEditModel : IValidatableObject
 {

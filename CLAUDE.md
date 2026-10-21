@@ -60,6 +60,13 @@ everything else comes from user-defined custom monitors (the starter library shi
 - `src/Yanmt.Infrastructure` — EF Core (SQLite, WAL, migrations under `Data/Migrations`), audit
   interceptor, role mapping, file logger, services; later collectors and the polling engine.
 - `src/Yanmt.Web` — host (`Program.cs`), Kestrel/HTTPS/Windows service/auth, Blazor components.
+- Monitoring (`Infrastructure/Monitoring`): pollers (e.g. `IcmpPoller`) only measure and submit
+  `PollResult`s. `StatusEngine` is the **single writer** of `StatusSource`, samples, and events. It
+  updates `StatusCache` after each commit and publishes changed node ids on `StatusBroadcaster`, and
+  pages read live state from the cache. State logic lives in Core (e.g. `IcmpEvaluator`). Inventory and
+  settings saves call `InventoryChangeSignal.Notify()` so pollers reload.
+- The map is an SVG Blazor component (`Pages/Maps`). Pan, zoom, and drag are in the hand-written
+  `wwwroot/js/map.js` (no libraries, no build step). It reports clicks and final positions to .NET.
 - Status severity is one scale everywhere: Normal, Warning, Critical, Unknown. Rollup rank:
   Critical > Warning > Unknown > Normal.
 

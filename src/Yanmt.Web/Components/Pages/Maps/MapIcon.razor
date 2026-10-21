@@ -1,0 +1,83 @@
+@using System.Globalization
+@using Yanmt.Infrastructure.Data.Entities
+@using Yanmt.Infrastructure.Maps
+
+@* One node or submap icon. Re-renders only when its own state, value or selection changes. *@
+<g data-el="@Element.Id" data-x="@F(Element.X)" data-y="@F(Element.Y)" transform="translate(@F(Element.X) @F(Element.Y))" class="@Css">
+    <title>@Tooltip</title>
+    @if (Selected || LinkSource)
+    {
+        <circle class="map-ring" r="34" />
+    }
+    @if (Element.Kind == MapElementKind.Submap)
+    {
+        <path class="map-shape" fill="@Color" d="M-30,-20 h20 l6,6 h34 v34 h-60 z" />
+        <path class="map-glyph" d="M-20,-4 h40 M-20,6 h40" />
+    }
+    else
+    {
+        @switch (Element.Icon)
+        {
+            case NodeIconType.Router:
+                <circle class="map-shape" fill="@Color" r="20" />
+                <path class="map-glyph" d="M-8,-8 L8,8 M8,-8 L-8,8" />
+                break;
+            case NodeIconType.Switch:
+                <rect class="map-shape" fill="@Color" x="-24" y="-15" width="48" height="30" rx="4" />
+                <path class="map-glyph" d="M-14,-5 H14 M10,-9 L14,-5 L10,-1 M14,5 H-14 M-10,1 L-14,5 L-10,9" />
+                break;
+            case NodeIconType.Firewall:
+                <rect class="map-shape" fill="@Color" x="-20" y="-20" width="40" height="40" rx="2" />
+                <path class="map-glyph" d="M-20,-7 H20 M-20,6 H20 M-5,-20 V-7 M7,-7 V6 M-5,6 V20" />
+                break;
+            case NodeIconType.Server:
+                <rect class="map-shape" fill="@Color" x="-14" y="-22" width="28" height="44" rx="3" />
+                <path class="map-glyph" d="M-8,-12 H8 M-8,-4 H8 M-8,4 H8" />
+                break;
+            default:
+                <rect class="map-shape" fill="@Color" x="-20" y="-20" width="40" height="40" rx="10" />
+                break;
+        }
+    }
+    <g class="map-labels">
+        <text class="map-label" y="38">@Element.Title</text>
+        @if (!string.IsNullOrEmpty(Value))
+        {
+            @* Wrapped: Razor treats a bare <text> inside a code block as its own text tag. *@
+            <g><text class="map-value" y="52">@Value</text></g>
+        }
+    </g>
+</g>
+
+@code {
+    [Parameter, EditorRequired] public MapElementView Element { get; set; } = null!;
+    [Parameter] public Severity State { get; set; }
+    [Parameter] public string Color { get; set; } = "";
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public bool Selected { get; set; }
+    [Parameter] public bool LinkSource { get; set; }
+
+    private object? _last;
+
+    private string Css =>
+        "map-el" + (Element.Kind == MapElementKind.Node && !Element.NodeEnabled ? " map-el-disabled" : "");
+
+    private string Tooltip => Element.Kind == MapElementKind.Submap
+        ? $"Submap {Element.Title}: {State}"
+        : $"{Element.Hostname} ({Element.ManagementIp}): {(Element.NodeEnabled ? State.ToString() : "disabled")}"
+          + (string.IsNullOrEmpty(Value) ? "" : $", {Value}");
+
+    protected override bool ShouldRender()
+    {
+        var now = (Element, State, Color, Value, Selected, LinkSource);
+        if (Equals(now, _last))
+        {
+            return false;
+        }
+
+        _last = now;
+        return true;
+    }
+
+    private static string F(double v) => v.ToString("0.#", CultureInfo.InvariantCulture);
+}

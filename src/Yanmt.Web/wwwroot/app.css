@@ -417,3 +417,234 @@ pre.output {
 .field-row.profiles {
     margin-top: 0.9rem;
 }
+
+/* ---- Map ---- */
+.map-page {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 3rem - 2.5rem); /* below the top bar, inside main's padding */
+    min-height: 24rem;
+}
+
+.map-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.map-header .actions {
+    display: flex;
+    gap: 0.4rem;
+}
+
+.crumbs {
+    font-size: 1.1rem;
+}
+
+.crumbs .sep {
+    color: var(--muted);
+    margin: 0 0.4rem;
+}
+
+.map-body {
+    display: flex;
+    gap: 0.75rem;
+    flex: 1;
+    min-height: 0;
+}
+
+.map-stage {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.map-svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+}
+
+.map-svg:active {
+    cursor: grabbing;
+}
+
+.map-canvas {
+    fill: #fbfcfd;
+    stroke: var(--border);
+    stroke-dasharray: 6 4;
+}
+
+.map-el {
+    cursor: pointer;
+}
+
+.map-stage.editing .map-el {
+    cursor: move;
+}
+
+.map-stage.linking .map-el {
+    cursor: crosshair;
+}
+
+.map-shape {
+    stroke: #1b2433;
+    stroke-width: 1.5;
+}
+
+.map-glyph {
+    fill: none;
+    stroke: #ffffff;
+    stroke-width: 2.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.map-ring {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 3;
+    stroke-dasharray: 5 3;
+}
+
+.map-el-disabled {
+    opacity: 0.45;
+}
+
+.map-label,
+.map-value,
+.map-link-label {
+    text-anchor: middle;
+    paint-order: stroke;
+    stroke: #ffffff;
+    stroke-width: 3px;
+    stroke-linejoin: round;
+}
+
+.map-label {
+    font-size: 12px;
+    font-weight: 600;
+    fill: var(--text);
+}
+
+.map-value {
+    font-size: 11px;
+    fill: var(--muted);
+}
+
+.map-link-line {
+    stroke: #6b7684;
+    stroke-width: 2.5;
+}
+
+.map-link-hit {
+    stroke: transparent;
+    stroke-width: 14;
+}
+
+.map-link.selected .map-link-line {
+    stroke: var(--accent);
+    stroke-width: 4;
+}
+
+.map-link-label {
+    font-size: 11px;
+    fill: var(--muted);
+}
+
+.map-stage.editing .map-link {
+    cursor: pointer;
+}
+
+.map-empty,
+.map-hint {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.5rem 0.9rem;
+    color: var(--muted);
+    pointer-events: none;
+}
+
+.map-empty {
+    top: 40%;
+}
+
+.map-hint {
+    top: 0.6rem;
+    color: var(--text);
+}
+
+.map-panel {
+    width: 20rem;
+    flex: none;
+    overflow-y: auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.9rem;
+}
+
+.map-panel section + section {
+    border-top: 1px solid var(--border);
+    margin-top: 0.9rem;
+    padding-top: 0.9rem;
+}
+
+.map-panel label {
+    display: block;
+    font-weight: 600;
+    margin: 0.6rem 0 0.25rem;
+}
+
+.map-panel select,
+.map-panel input:not([type="number"]):not([type="file"]) {
+    width: 100%;
+    min-width: 0;
+}
+
+.map-panel .inline {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+}
+
+.inline {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+}
+
+.edit-link {
+    margin-left: 0.5rem;
+    font-size: 0.85em;
+}
+
+.row-actions {
+    text-align: right;
+    white-space: nowrap;
+}
+
+@media (max-width: 800px) {
+    .map-body {
+        flex-direction: column;
+    }
+
+    .map-panel {
+        width: auto;
+        max-height: 45%;
+    }
+}

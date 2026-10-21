@@ -1,0 +1,649 @@
+@page "/"
+@page "/maps/{Id:int}"
+@implements IAsyncDisposable
+@using System.Globalization
+@using Yanmt.Core.Maps
+@using Yanmt.Infrastructure.Data.Entities
+@using Yanmt.Infrastructure.Maps
+@using Yanmt.Infrastructure.Monitoring
+@inject MapService Maps
+@inject StatusCache Status
+@inject StatusBroadcaster Broadcaster
+@inject SettingsService Settings
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject AuthenticationStateProvider Auth
+
+<PageTitle>@(_map?.Name ?? "Map") - YANMT</PageTitle>
+
+<div class="map-page">
+    <div class="map-header">
+        <nav class="crumbs" aria-label="Map path">
+            @if (_map is not null)
+            {
+                @for (var i = 0; i < _map.Breadcrumbs.Count; i++)
+                {
+                    var crumb = _map.Breadcrumbs[i];
+                    @if (i > 0)
+                    {
+                        <span class="sep">›</span>
+                    }
+                    @if (i == _map.Breadcrumbs.Count - 1)
+                    {
+                        <strong>@crumb.Name</strong>
+                    }
+                    else
+                    {
+                        <a href="maps/@crumb.Id">@crumb.Name</a>
+                    }
+                }
+            }
+        </nav>
+        <div class="actions">
+            <button class="btn" title="Fit the map to the window" @onclick="FitAsync">Fit</button>
+            <button class="btn" title="Zoom in" @onclick="() => ZoomAsync(1.25)">+</button>
+            <button class="btn" title="Zoom out" @onclick="() => ZoomAsync(0.8)">−</button>
+            @if (_isAdmin && _map is not null)
+            {
+                <button class="btn @(_editing ? "primary" : null)" @onclick="ToggleEditAsync">@(_editing ? "Done editing" : "Edit map")</button>
+            }
+            <a class="btn" href="maps">All maps</a>
+        </div>
+    </div>
+
+    @if (_notFound)
+    {
+        <p class="error page">Map @Id does not exist (it may have been deleted). <a href="">Go to the home map</a>.</p>
+    }
+    else
+    {
+        <div class="map-body">
+            <div class="map-stage @(_editing ? "editing" : null) @(_linkMode ? "linking" : null)">
+                <svg @ref="_svg" class="map-svg" role="img" aria-label="Network map @_map?.Name">
+                    <g data-viewport>
+                        @if (_map is not null)
+                        {
+                            var rollup = new MapRollup(_contents, Status.StateOf);
+                            <rect class="map-canvas" width="@_map.Width" height="@_map.Height" />
+                            @if (_map.BackgroundUrl is not null)
+                            {
+                                <image href="@_map.BackgroundUrl" width="@_map.Width" height="@_map.Height" preserveAspectRatio="xMidYMid meet" />
+                            }
+                            <g class="map-links">
+                                @foreach (var link in _map.Links)
+                                {
+                                    if (!_byId.TryGetValue(link.FromElementId, out var a) || !_byId.TryGetValue(link.ToElementId, out var b))
+                                    {
+                                        continue;
+                                    }
+                                    <g @key="link.Id" data-link="@link.Id" data-from="@link.FromElementId" data-to="@link.ToElementId"
+                                       class="map-link @(_selectedLink == link.Id ? "selected" : null)">
+                                        <line class="map-link-hit" x1="@F(a.X)" y1="@F(a.Y)" x2="@F(b.X)" y2="@F(b.Y)" />
+                                        <line class="map-link-line" x1="@F(a.X)" y1="@F(a.Y)" x2="@F(b.X)" y2="@F(b.Y)" />
+                                        @if (!string.IsNullOrEmpty(link.Label))
+                                        {
+                                            <g>
+                                                <text class="map-link-label" x="@F((a.X + b.X) / 2)" y="@F((a.Y + b.Y) / 2 - 6)">@link.Label</text>
+                                            </g>
+                                        }
+                                    </g>
+                                }
+                            </g>
+                            <g class="map-elements">
+                                @foreach (var el in _map.Elements)
+                                {
+                                    var state = StateOf(el, rollup);
+                                    <MapIcon @key="el.Id" Element="el" State="state" Color="@_colors.For(state)" Value="@ValueOf(el)"
+                                             Selected="@(_selectedElement == el.Id)" LinkSource="@(_linkFrom == el.Id)" />
+                                }
+                            </g>
+                        }
+                    </g>
+                </svg>
+
+                @if (_map is { Elements.Count: 0 } && !_editing)
+                {
+                    <div class="map-empty">
+                        This map is empty.
+                        @if (_isAdmin)
+                        {
+                            <span>Choose <b>Edit map</b> to place nodes and submaps.</span>
+                        }
+                    </div>
+                }
+                @if (_linkMode)
+                {
+                    <div class="map-hint">@(_linkFrom is null ? "Click the first icon of the link." : "Now click the second icon. Choose Draw link again to stop.")</div>
+                }
+            </div>
+
+            @if (_editing && _map is not null)
+            {
+                <aside class="map-panel">
+                    @if (_error is not null)
+                    {
+                        <p class="error">@_error</p>
+                    }
+
+                    @if (SelectedElement is { } sel)
+                    {
+                        <section>
+                            <h2>@(sel.Kind == MapElementKind.Node ? "Node" : "Submap") <span class="muted">@sel.Title</span></h2>
+                            @if (sel.Kind == MapElementKind.Node)
+                            {
+                                <p class="muted mono">@sel.ManagementIp</p>
+                                <label for="label-src">Value under the name</label>
+                                <select id="label-src" @onchange="e => SetLabelAsync(sel, (string?)e.Value)">
+                                    <option value="" selected="@(sel.LabelSourceType is null)">(none)</option>
+                                    @foreach (var src in LabelChoices(sel))
+                                    {
+                                        <option value="@LabelKey(src.Type, src.Key)" selected="@(sel.LabelSourceType == src.Type && sel.LabelSourceKey == src.Key)">@LabelName(src.Type, src.Key)</option>
+                                    }
+                                </select>
+                                <div class="hint">Sources appear here once they've been polled.</div>
+                                <div class="form-actions">
+                                    <a class="btn" href="nodes/@sel.NodeId/view">Open node</a>
+                                    <button class="btn danger-outline" @onclick="() => RemoveElementAsync(sel)" disabled="@_busy">Remove from map</button>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="form-actions">
+                                    <a class="btn" href="maps/@sel.TargetMapId">Open submap</a>
+                                    <button class="btn danger-outline" @onclick="() => RemoveElementAsync(sel)" disabled="@_busy">Remove icon</button>
+                                </div>
+                                <div class="hint">Removing the icon keeps the map itself; delete maps from All maps.</div>
+                            }
+                        </section>
+                    }
+                    else if (SelectedLink is { } link)
+                    {
+                        <section>
+                            <h2>Link <span class="muted">@TitleOf(link.FromElementId) – @TitleOf(link.ToElementId)</span></h2>
+                            <label for="link-label">Label</label>
+                            <input id="link-label" @bind="_linkLabel" maxlength="@MapRules.MaxLinkLabelLength" placeholder="e.g. Gi1/0/1 – Gi0/0/0" />
+                            <div class="form-actions">
+                                <button class="btn primary" @onclick="() => SaveLinkLabelAsync(link)" disabled="@_busy">Save label</button>
+                                <button class="btn danger-outline" @onclick="() => RemoveLinkAsync(link)" disabled="@_busy">Delete link</button>
+                            </div>
+                            <div class="hint">Binding a link to an interface monitor arrives with custom monitors.</div>
+                        </section>
+                    }
+
+                    <section>
+                        <h2>Place</h2>
+                        <label for="add-node">Node</label>
+                        <div class="inline">
+                            <select id="add-node" @bind="_nodeToAdd">
+                                <option value="0">(choose a node)</option>
+                                @foreach (var n in _availableNodes)
+                                {
+                                    <option value="@n.Id">@n.Hostname (@n.ManagementIp)</option>
+                                }
+                            </select>
+                            <button class="btn" @onclick="AddNodeAsync" disabled="@(_busy || _nodeToAdd == 0)">Add</button>
+                        </div>
+
+                        <label for="new-submap">New submap</label>
+                        <div class="inline">
+                            <input id="new-submap" @bind="_newSubmapName" placeholder="e.g. Site A" maxlength="@MapRules.MaxNameLength" />
+                            <button class="btn" @onclick="CreateSubmapAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_newSubmapName))">Create</button>
+                        </div>
+
+                        @if (ExistingMapChoices.Any())
+                        {
+                            <label for="add-map">Existing map as submap</label>
+                            <div class="inline">
+                                <select id="add-map" @bind="_mapToAdd">
+                                    <option value="0">(choose a map)</option>
+                                    @foreach (var m in ExistingMapChoices)
+                                    {
+                                        <option value="@m.Id">@m.Name</option>
+                                    }
+                                </select>
+                                <button class="btn" @onclick="AddExistingSubmapAsync" disabled="@(_busy || _mapToAdd == 0)">Add</button>
+                            </div>
+                        }
+
+                        <div class="form-actions">
+                            <button class="btn @(_linkMode ? "primary" : null)" @onclick="ToggleLinkMode">Draw link</button>
+                        </div>
+                        <div class="hint">New icons appear in the middle of the view. Drag icons to move them.</div>
+                    </section>
+
+                    <section>
+                        <h2>Map</h2>
+                        <label for="map-name">Name</label>
+                        <div class="inline">
+                            <input id="map-name" @bind="_mapName" maxlength="@MapRules.MaxNameLength" />
+                            <button class="btn" @onclick="RenameAsync" disabled="@(_busy || _mapName == _map.Name)">Rename</button>
+                        </div>
+
+                        <label>Background image</label>
+                        <InputFile OnChange="UploadBackgroundAsync" accept=".png,.jpg,.jpeg,.gif" disabled="@_busy" />
+                        <div class="hint">PNG, JPEG or GIF up to @(MapRules.MaxBackgroundBytes / (1024 * 1024)) MB. The canvas takes the image's size.</div>
+                        @if (_map.BackgroundUrl is not null)
+                        {
+                            <div class="form-actions">
+                                <button class="btn danger-outline" @onclick="ClearBackgroundAsync" disabled="@_busy">Remove background</button>
+                            </div>
+                        }
+
+                        <label>Canvas size (pixels)</label>
+                        <div class="inline">
+                            <input type="number" class="narrow-field" @bind="_canvasWidth" min="@MapRules.MinCanvasSize" max="@MapRules.MaxCanvasSize" aria-label="Width" />
+                            <span>×</span>
+                            <input type="number" class="narrow-field" @bind="_canvasHeight" min="@MapRules.MinCanvasSize" max="@MapRules.MaxCanvasSize" aria-label="Height" />
+                            <button class="btn" @onclick="SetCanvasAsync" disabled="@_busy">Apply</button>
+                        </div>
+                    </section>
+                </aside>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public int? Id { get; set; }
+
+    private MapView? _map;
+    private Dictionary<int, MapElementView> _byId = [];
+    private HashSet<int> _nodeIds = [];
+    private IReadOnlyDictionary<int, MapContents> _contents = new Dictionary<int, MapContents>();
+    private List<NodeChoice> _availableNodes = [];
+    private List<MapSummary> _allMaps = [];
+    private StatusColors _colors = StatusColors.Default;
+    private bool _isAdmin;
+    private bool _notFound;
+    private bool _editing;
+    private bool _busy;
+    private bool _linkMode;
+    private string? _error;
+
+    private int? _selectedElement;
+    private int? _selectedLink;
+    private int? _linkFrom;
+    private string? _linkLabel;
+    private int _nodeToAdd;
+    private int _mapToAdd;
+    private string? _newSubmapName;
+    private string _mapName = "";
+    private int _canvasWidth;
+    private int _canvasHeight;
+
+    private ElementReference _svg;
+    private IJSObjectReference? _module;
+    private IJSObjectReference? _controller;
+    private DotNetObjectReference<MapPage>? _self;
+    private (int Id, int W, int H) _shown;
+    private bool _editingShown;
+
+    private MapElementView? SelectedElement => _selectedElement is { } id ? _byId.GetValueOrDefault(id) : null;
+    private MapLinkView? SelectedLink => _selectedLink is { } id ? _map?.Links.FirstOrDefault(l => l.Id == id) : null;
+
+    private IEnumerable<MapSummary> ExistingMapChoices => _map is null
+        ? []
+        : _allMaps.Where(m => m.Id != _map.Id && !_map.Elements.Any(e => e.TargetMapId == m.Id));
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await Auth.GetAuthenticationStateAsync();
+        _isAdmin = auth.User.IsInRole(YanmtRoles.Admin);
+        _colors = await Settings.GetAsync(SettingKeys.StatusColors);
+        Broadcaster.Changed += OnStatusChanged;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _selectedElement = _selectedLink = _linkFrom = null;
+        _linkMode = false;
+        _error = null;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        var id = Id ?? await Maps.GetHomeMapIdAsync();
+        _map = await Maps.GetAsync(id);
+        _notFound = _map is null;
+        if (_map is null)
+        {
+            return;
+        }
+
+        _byId = _map.Elements.ToDictionary(e => e.Id);
+        _nodeIds = _map.Elements.Where(e => e.NodeId is not null).Select(e => e.NodeId!.Value).ToHashSet();
+        _contents = await Maps.RollupContentsAsync();
+        _mapName = _map.Name;
+        _canvasWidth = _map.Width;
+        _canvasHeight = _map.Height;
+        if (_editing)
+        {
+            _availableNodes = await Maps.NodesNotOnMapAsync(_map.Id);
+            _allMaps = await Maps.ListAsync();
+        }
+
+        if (_selectedElement is { } e && !_byId.ContainsKey(e))
+        {
+            _selectedElement = null;
+        }
+
+        if (_selectedLink is { } l && _map.Links.All(x => x.Id != l))
+        {
+            _selectedLink = null;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_map is null)
+        {
+            return;
+        }
+
+        if (_controller is null)
+        {
+            _module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./" + Assets["js/map.js"]);
+            _self ??= DotNetObjectReference.Create(this);
+            _controller = await _module.InvokeAsync<IJSObjectReference>("create", _svg, _self,
+                new { editable = _editing, width = _map.Width, height = _map.Height });
+            _shown = (_map.Id, _map.Width, _map.Height);
+            _editingShown = _editing;
+            return;
+        }
+
+        if (_shown != (_map.Id, _map.Width, _map.Height))
+        {
+            await _controller.InvokeVoidAsync("setCanvas", _map.Width, _map.Height, true);
+            _shown = (_map.Id, _map.Width, _map.Height);
+        }
+
+        if (_editingShown != _editing)
+        {
+            await _controller.InvokeVoidAsync("setEditable", _editing);
+            _editingShown = _editing;
+        }
+    }
+
+    private Severity StateOf(MapElementView el, MapRollup rollup) =>
+        el.Kind == MapElementKind.Node ? Status.StateOf(el.NodeId!.Value) : rollup.StateOf(el.TargetMapId!.Value);
+
+    private string? ValueOf(MapElementView el) =>
+        el is { Kind: MapElementKind.Node, LabelSourceType: { } type } && el.NodeEnabled
+            ? Status.Get(el.NodeId!.Value)?.Source(type, el.LabelSourceKey ?? "")?.ValueText
+            : null;
+
+    private string TitleOf(int elementId) => _byId.GetValueOrDefault(elementId)?.Title ?? "?";
+
+    private void OnStatusChanged(IReadOnlyCollection<int> nodeIds)
+    {
+        // Submap icons depend on nodes that aren't on this map, so any change can matter to them.
+        if (_map is not null && (_map.Elements.Any(e => e.Kind == MapElementKind.Submap) || nodeIds.Any(_nodeIds.Contains)))
+        {
+            _ = InvokeAsync(StateHasChanged);
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnMapClick(string kind, int id, double x, double y)
+    {
+        if (_map is null)
+        {
+            return;
+        }
+
+        var element = kind == "element" ? _byId.GetValueOrDefault(id) : null;
+        if (!_editing)
+        {
+            if (element is { Kind: MapElementKind.Node })
+            {
+                Nav.NavigateTo($"nodes/{element.NodeId}/view");
+            }
+            else if (element is { Kind: MapElementKind.Submap })
+            {
+                Nav.NavigateTo($"maps/{element.TargetMapId}");
+            }
+
+            return;
+        }
+
+        _error = null;
+        if (_linkMode)
+        {
+            if (element is null)
+            {
+                return;
+            }
+
+            if (_linkFrom is null || _linkFrom == element.Id)
+            {
+                _linkFrom = element.Id;
+            }
+            else
+            {
+                var result = await Maps.AddLinkAsync(_map.Id, _linkFrom.Value, element.Id);
+                _linkFrom = null;
+                if (!result.Ok)
+                {
+                    _error = result.Error;
+                }
+
+                await LoadAsync();
+            }
+
+            StateHasChanged();
+            return;
+        }
+
+        _selectedElement = element?.Id;
+        _selectedLink = kind == "link" ? id : null;
+        _linkLabel = SelectedLink?.Label;
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public async Task OnElementMoved(int id, double x, double y)
+    {
+        if (_map is null || !_editing || !_byId.TryGetValue(id, out var el))
+        {
+            return;
+        }
+
+        var (cx, cy) = MapRules.Clamp(x, y, _map.Width, _map.Height);
+        var result = await Maps.MoveAsync(id, cx, cy);
+        if (!result.Ok)
+        {
+            _error = result.Error;
+            await LoadAsync();
+        }
+        else
+        {
+            var moved = el with { X = cx, Y = cy };
+            _byId[id] = moved;
+            _map = _map with { Elements = _map.Elements.Select(e => e.Id == id ? moved : e).ToList() };
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task ToggleEditAsync()
+    {
+        _editing = !_editing;
+        _linkMode = false;
+        _linkFrom = _selectedElement = _selectedLink = null;
+        _error = null;
+        await LoadAsync();
+    }
+
+    private void ToggleLinkMode()
+    {
+        _linkMode = !_linkMode;
+        _linkFrom = null;
+        _selectedElement = _selectedLink = null;
+    }
+
+    private async Task FitAsync()
+    {
+        if (_controller is not null)
+        {
+            await _controller.InvokeVoidAsync("fit");
+        }
+    }
+
+    private async Task ZoomAsync(double factor)
+    {
+        if (_controller is not null)
+        {
+            await _controller.InvokeVoidAsync("zoomBy", factor);
+        }
+    }
+
+    private async Task<(double X, double Y)> ViewCenterAsync()
+    {
+        if (_controller is null || _map is null)
+        {
+            return (_map?.Width / 2.0 ?? 0, _map?.Height / 2.0 ?? 0);
+        }
+
+        var c = await _controller.InvokeAsync<Point>("center");
+        return (c.X, c.Y);
+    }
+
+    private sealed record Point(double X, double Y);
+
+    private async Task RunAsync(Func<Task<MapResult>> action, Action<MapResult>? onSuccess = null)
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            var result = await action();
+            if (result.Ok)
+            {
+                onSuccess?.Invoke(result);
+            }
+            else
+            {
+                _error = result.Error;
+            }
+
+            await LoadAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task AddNodeAsync()
+    {
+        var (x, y) = await ViewCenterAsync();
+        await RunAsync(() => Maps.AddNodeAsync(_map!.Id, _nodeToAdd, x, y), r =>
+        {
+            _nodeToAdd = 0;
+            _selectedElement = r.Id;
+            _selectedLink = null;
+        });
+    }
+
+    private async Task CreateSubmapAsync()
+    {
+        var (x, y) = await ViewCenterAsync();
+        await RunAsync(() => Maps.CreateSubmapAsync(_map!.Id, _newSubmapName ?? "", x, y), r =>
+        {
+            _newSubmapName = null;
+            _selectedElement = r.Id;
+            _selectedLink = null;
+        });
+    }
+
+    private async Task AddExistingSubmapAsync()
+    {
+        var (x, y) = await ViewCenterAsync();
+        await RunAsync(() => Maps.AddSubmapAsync(_map!.Id, _mapToAdd, x, y), r =>
+        {
+            _mapToAdd = 0;
+            _selectedElement = r.Id;
+            _selectedLink = null;
+        });
+    }
+
+    private Task RemoveElementAsync(MapElementView el) =>
+        RunAsync(() => Maps.RemoveElementAsync(el.Id), _ => _selectedElement = null);
+
+    private Task SaveLinkLabelAsync(MapLinkView link) => RunAsync(() => Maps.SetLinkLabelAsync(link.Id, _linkLabel));
+
+    private Task RemoveLinkAsync(MapLinkView link) => RunAsync(() => Maps.RemoveLinkAsync(link.Id), _ => _selectedLink = null);
+
+    private Task RenameAsync() => RunAsync(() => Maps.RenameAsync(_map!.Id, _mapName));
+
+    private Task SetCanvasAsync() => RunAsync(() => Maps.SetCanvasAsync(_map!.Id, _canvasWidth, _canvasHeight));
+
+    private Task ClearBackgroundAsync() => RunAsync(() => Maps.ClearBackgroundAsync(_map!.Id));
+
+    private async Task UploadBackgroundAsync(InputFileChangeEventArgs e)
+    {
+        if (e.File.Size > MapRules.MaxBackgroundBytes)
+        {
+            _error = $"The image is larger than {MapRules.MaxBackgroundBytes / (1024 * 1024)} MB.";
+            return;
+        }
+
+        await RunAsync(async () =>
+        {
+            await using var stream = e.File.OpenReadStream(MapRules.MaxBackgroundBytes);
+            return await Maps.SetBackgroundAsync(_map!.Id, stream);
+        });
+    }
+
+    private IEnumerable<SourceStatus> LabelChoices(MapElementView el) =>
+        el.NodeId is { } id ? Status.Get(id)?.Sources ?? [] : [];
+
+    private static string LabelKey(StatusSourceType type, string key) => $"{type}|{key}";
+
+    private static string LabelName(StatusSourceType type, string key) => type switch
+    {
+        StatusSourceType.Icmp => "ICMP latency",
+        _ when key.Length > 0 => $"{type} ({key})",
+        _ => type.ToString(),
+    };
+
+    private Task SetLabelAsync(MapElementView el, string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return RunAsync(() => Maps.SetLabelSourceAsync(el.Id, null, null));
+        }
+
+        var parts = value.Split('|', 2);
+        return Enum.TryParse<StatusSourceType>(parts[0], out var type)
+            ? RunAsync(() => Maps.SetLabelSourceAsync(el.Id, type, parts.Length > 1 ? parts[1] : ""))
+            : Task.CompletedTask;
+    }
+
+    private static string F(double v) => v.ToString("0.#", CultureInfo.InvariantCulture);
+
+    public async ValueTask DisposeAsync()
+    {
+        Broadcaster.Changed -= OnStatusChanged;
+        try
+        {
+            if (_controller is not null)
+            {
+                await _controller.InvokeVoidAsync("dispose");
+                await _controller.DisposeAsync();
+            }
+
+            if (_module is not null)
+            {
+                await _module.DisposeAsync();
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+            // The circuit is already gone.
+        }
+
+        _self?.Dispose();
+    }
+}

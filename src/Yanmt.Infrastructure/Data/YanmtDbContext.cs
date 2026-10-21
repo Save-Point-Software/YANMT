@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Yanmt.Core.Credentials;
 using Yanmt.Core.Inventory;
+using Yanmt.Core.Maps;
 using Yanmt.Core.Status;
 using Yanmt.Infrastructure.Data.Entities;
 
@@ -16,6 +17,10 @@ public class YanmtDbContext(DbContextOptions<YanmtDbContext> options) : DbContex
     public DbSet<Event> Events => Set<Event>();
     public DbSet<Setting> Settings => Set<Setting>();
     public DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
+    public DbSet<IcmpSample> IcmpSamples => Set<IcmpSample>();
+    public DbSet<Map> Maps => Set<Map>();
+    public DbSet<MapElement> MapElements => Set<MapElement>();
+    public DbSet<MapLink> MapLinks => Set<MapLink>();
 
     /// <summary>Audit rows captured by <see cref="AuditInterceptor"/> between SavingChanges and SavedChanges.</summary>
     internal List<AuditInterceptor.PendingAudit> PendingAudits { get; } = [];
@@ -29,6 +34,7 @@ public class YanmtDbContext(DbContextOptions<YanmtDbContext> options) : DbContex
         configurationBuilder.Properties<CredentialKind>().HaveConversion<string>().HaveMaxLength(16);
         configurationBuilder.Properties<SnmpAuthProtocol>().HaveConversion<string>().HaveMaxLength(16);
         configurationBuilder.Properties<SnmpPrivProtocol>().HaveConversion<string>().HaveMaxLength(16);
+        configurationBuilder.Properties<MapElementKind>().HaveConversion<string>().HaveMaxLength(16);
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -86,6 +92,44 @@ public class YanmtDbContext(DbContextOptions<YanmtDbContext> options) : DbContex
 
             // Events outlive the node they describe; the message carries the hostname.
             e.HasOne(x => x.Node).WithMany().HasForeignKey(x => x.NodeId).OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<IcmpSample>(e =>
+        {
+            e.HasIndex(x => new { x.NodeId, x.TimestampUtc });
+            e.HasOne(x => x.Node).WithMany().HasForeignKey(x => x.NodeId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<Map>(e =>
+        {
+            e.Property(m => m.Name).HasMaxLength(MapRules.MaxNameLength).UseCollation("NOCASE");
+            e.HasIndex(m => m.Name).IsUnique();
+            e.Property(m => m.BackgroundImage).HasMaxLength(100);
+            e.HasOne(m => m.ParentMap).WithMany().HasForeignKey(m => m.ParentMapId).OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<MapElement>(e =>
+        {
+            e.Property(x => x.LabelSourceKey).HasMaxLength(64);
+            e.HasOne(x => x.Map).WithMany(m => m.Elements).HasForeignKey(x => x.MapId).OnDelete(DeleteBehavior.Cascade);
+
+            // Deleting a node or a map removes its icons from every map (and, through them, their links).
+            e.HasOne(x => x.Node).WithMany().HasForeignKey(x => x.NodeId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.TargetMap).WithMany().HasForeignKey(x => x.TargetMapId).OnDelete(DeleteBehavior.Cascade);
+
+            // A node or a submap appears at most once per map. SQLite treats NULLs as distinct, so
+            // these don't collide between node and submap elements.
+            e.HasIndex(x => new { x.MapId, x.NodeId }).IsUnique();
+            e.HasIndex(x => new { x.MapId, x.TargetMapId }).IsUnique();
+        });
+
+        modelBuilder.Entity<MapLink>(e =>
+        {
+            e.Property(x => x.Label).HasMaxLength(MapRules.MaxLinkLabelLength);
+            e.HasOne(x => x.Map).WithMany(m => m.Links).HasForeignKey(x => x.MapId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.From).WithMany().HasForeignKey(x => x.FromElementId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.To).WithMany().HasForeignKey(x => x.ToElementId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.MapId, x.FromElementId, x.ToElementId }).IsUnique();
         });
 
         modelBuilder.Entity<Setting>(e =>
