@@ -96,7 +96,7 @@ public sealed class ConnectionTester(
             var details = new List<KeyValuePair<string, string>>
             {
                 new("Target", $"{node.ManagementIp} udp/{port}"),
-                new("Security", $"authPriv, user {credential.Username}, {CredentialRules.Describe(credential.Auth)} / {CredentialRules.Describe(credential.Priv)}"),
+                new("Security", $"authPriv, user {credential.Username}, {CredentialRules.Label(credential.Auth)} / {CredentialRules.Label(credential.Priv)}"),
             };
 
             var target = new SnmpTarget(IPAddress.Parse(node.ManagementIp), port, credential, SnmpTimeout);

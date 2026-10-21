@@ -6,17 +6,22 @@ public enum CredentialKind
     SnmpV3,
 }
 
-/// <summary>SNMPv3 USM authentication. SHA-2 only (RFC 7860); MD5 and SHA-1 are deliberately absent.</summary>
+/// <summary>
+/// SNMPv3 USM authentication: SHA-2 (RFC 7860), plus SHA-1 (HMAC-SHA-96, RFC 3414) as a legacy
+/// option for devices without SHA-2, allowed only with AES-128. MD5 is deliberately absent.
+/// </summary>
 public enum SnmpAuthProtocol
 {
     Sha256,
     Sha384,
     Sha512,
+    Sha1,
 }
 
 /// <summary>
-/// SNMPv3 USM privacy. With SHA-256 or stronger auth the localized key is already long enough for
-/// AES-256, so no (non-standard) key extension is involved for any of these.
+/// SNMPv3 USM privacy. DES is deliberately absent. Only AES-128 is verified against IOS-XE: in the
+/// CML lab SHA-256/AES-256 was refused with usmStatsWrongDigests even with re-entered passwords, so
+/// AES-192/256 stay selectable but are flagged as not verified (see docs/SPEC.md).
 /// </summary>
 public enum SnmpPrivProtocol
 {
@@ -86,8 +91,25 @@ public static class CredentialRules
             : null;
     }
 
+    /// <summary>SHA-1 can't localize a key long enough for AES-192/256 without a non-standard extension.</summary>
+    public static string? ValidateSnmpProtocols(SnmpAuthProtocol auth, SnmpPrivProtocol priv) =>
+        auth == SnmpAuthProtocol.Sha1 && priv != SnmpPrivProtocol.Aes128
+            ? "SHA-1 (legacy) can only be paired with AES-128."
+            : null;
+
+    public static bool IsLegacy(SnmpAuthProtocol auth) => auth == SnmpAuthProtocol.Sha1;
+
+    /// <summary>True for the privacy protocols proven against IOS-XE in the lab (AES-128 only, so far).</summary>
+    public static bool IsVerifiedOnIosXe(SnmpPrivProtocol priv) => priv == SnmpPrivProtocol.Aes128;
+
+    /// <summary>Describe, plus the "legacy" / "not verified" flags, for pickers and lists.</summary>
+    public static string Label(SnmpAuthProtocol auth) => IsLegacy(auth) ? $"{Describe(auth)} (legacy)" : Describe(auth);
+
+    public static string Label(SnmpPrivProtocol priv) => IsVerifiedOnIosXe(priv) ? Describe(priv) : $"{Describe(priv)} (not verified on IOS-XE)";
+
     public static string Describe(SnmpAuthProtocol auth) => auth switch
     {
+        SnmpAuthProtocol.Sha1 => "SHA-1",
         SnmpAuthProtocol.Sha256 => "SHA-256",
         SnmpAuthProtocol.Sha384 => "SHA-384",
         SnmpAuthProtocol.Sha512 => "SHA-512",

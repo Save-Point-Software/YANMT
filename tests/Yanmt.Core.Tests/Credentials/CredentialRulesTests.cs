@@ -51,10 +51,31 @@ public class CredentialRulesTests
         Assert.NotNull(CredentialRules.ValidateSecret("Password", new string('x', CredentialRules.MaxSecretLength + 1), CredentialKind.Ssh));
 
     [Fact]
-    public void Only_sha2_auth_and_aes_priv_exist()
+    public void Only_sha2_plus_legacy_sha1_auth_and_aes_priv_exist()
     {
-        Assert.Equal(["Sha256", "Sha384", "Sha512"], Enum.GetNames<SnmpAuthProtocol>());
+        // No MD5, no DES. Names are stored in the DB, so renaming one needs a migration.
+        Assert.Equal(["Sha256", "Sha384", "Sha512", "Sha1"], Enum.GetNames<SnmpAuthProtocol>());
         Assert.Equal(["Aes128", "Aes192", "Aes256"], Enum.GetNames<SnmpPrivProtocol>());
+    }
+
+    [Theory]
+    [InlineData(SnmpAuthProtocol.Sha1, SnmpPrivProtocol.Aes128, true)]
+    [InlineData(SnmpAuthProtocol.Sha1, SnmpPrivProtocol.Aes192, false)]
+    [InlineData(SnmpAuthProtocol.Sha1, SnmpPrivProtocol.Aes256, false)]
+    [InlineData(SnmpAuthProtocol.Sha256, SnmpPrivProtocol.Aes128, true)]
+    [InlineData(SnmpAuthProtocol.Sha256, SnmpPrivProtocol.Aes256, true)]
+    [InlineData(SnmpAuthProtocol.Sha512, SnmpPrivProtocol.Aes192, true)]
+    public void Sha1_pairs_only_with_aes128(SnmpAuthProtocol auth, SnmpPrivProtocol priv, bool valid) =>
+        Assert.Equal(valid, CredentialRules.ValidateSnmpProtocols(auth, priv) is null);
+
+    [Fact]
+    public void Labels_flag_legacy_auth_and_unverified_privacy()
+    {
+        Assert.Equal("SHA-1 (legacy)", CredentialRules.Label(SnmpAuthProtocol.Sha1));
+        Assert.Equal("SHA-256", CredentialRules.Label(SnmpAuthProtocol.Sha256));
+        Assert.Equal("AES-128", CredentialRules.Label(SnmpPrivProtocol.Aes128));
+        Assert.Equal("AES-192 (not verified on IOS-XE)", CredentialRules.Label(SnmpPrivProtocol.Aes192));
+        Assert.Equal("AES-256 (not verified on IOS-XE)", CredentialRules.Label(SnmpPrivProtocol.Aes256));
     }
 
     [Fact]

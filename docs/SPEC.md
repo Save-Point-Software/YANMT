@@ -40,7 +40,7 @@ Before writing any code, read this whole document, then propose an implementatio
 | Web login | **Windows Integrated Authentication** (Negotiate: Kerberos with NTLM fallback). Map two roles, `admin` and `viewer`, to groups set in config. Groups can be **AD groups** (`DOMAIN\Group`) or **local Windows groups** (`Group` or `MACHINE\Group`); local groups are a supported production option for servers that aren't domain-joined (NTLM with local accounts). Names are resolved to SIDs at startup. No LDAP library and no password handling in the app. |
 | Database | **SQLite** via EF Core (`Microsoft.EntityFrameworkCore.Sqlite`), WAL mode, with migrations. It's an embedded file, so there's no database server. |
 | ICMP | `System.Net.NetworkInformation.Ping` (built in, no admin rights needed) |
-| SNMP | `Lextm.SharpSnmpLib` **12.5.7** (latest stable; 13.x is beta). It ships SHA-256/384/512 auth and AES-128/192/256 priv providers. Prefer SHA-2 ≥256-bit auth with AES-256, which needs no Cisco key extension. Prove it against CML in this order: **SHA-256/AES-128 first, then SHA-256/AES-256**. |
+| SNMP | `Lextm.SharpSnmpLib` **12.5.7** (latest stable; 13.x is beta). **v1's supported pairing is SHA-256/AES-128**, proven on IOS-XE in CML, and it's the default for new profiles. **SHA-1** (HMAC-SHA-96) is a *legacy* auth option for devices without SHA-2, paired with **AES-128 only**. **No MD5, no DES.** SHA-384/512 and AES-192/256 stay selectable, but AES-192/256 are marked "not verified on IOS-XE" and aren't pursued in v1. See *SNMPv3 lab results* below. |
 | SSH | `SSH.NET` (`Renci.SshNet`). Test against IOS-XE's SSH algorithm set early. Prefer the exec channel for single `show` commands, and fall back to a shell stream only if needed. |
 | Diffs | `DiffPlex` |
 | Secrets | DPAPI via `System.Security.Cryptography.ProtectedData`, using **machine scope**, for encrypting device credentials in the DB. Never log secrets or send them back to the browser after saving. |
@@ -49,6 +49,15 @@ Before writing any code, read this whole document, then propose an implementatio
 | Tests | xUnit (v3), run in GitHub Actions on `windows-latest` |
 
 Additional approved packages: `Microsoft.Extensions.Hosting.WindowsServices` (for `UseWindowsService()`), `Microsoft.AspNetCore.Authentication.Negotiate` (Windows auth on Kestrel), `Microsoft.EntityFrameworkCore.Design` (dev-time only, not shipped), and `xunit.v3` (test projects only; it runs on Microsoft.Testing.Platform, opted into via `global.json`, so the VSTest packages `Microsoft.NET.Test.Sdk` and `xunit.runner.visualstudio` were approved but turned out to be unnecessary). Ask before adding anything else.
+
+### SNMPv3 lab results (Phase 1b, CML)
+
+- **SHA-256/AES-128:** passes on Hub-R2. This is the supported v1 pairing.
+- **SHA-256/AES-256:** failed on Hub-R2 with `usmStatsWrongDigests`, even with identical, re-entered passwords. **Decision: not pursued for v1.** New profiles default to SHA-256/AES-128, the UI marks AES-192/256 "not verified on IOS-XE", and the AES-256 integration test is skipped with this reason.
+  - *Caveat:* after that run, a YANMT bug was found that produces exactly this symptom. The response HMAC check zeroed SharpSnmpLib's process-wide localized-key cache, so the next request with the same auth password to the same engine was signed with a zero key. It's fixed and regression-tested. The failure therefore isn't evidence against IOS-XE, but AES-256 is still unverified. Re-testing it is optional; un-skip the test to run it.
+- **SHA-1/AES-128 (legacy):** for devices without SHA-2 auth, such as ISP-HUB in the lab. The response HMAC check covers HMAC-SHA-96, with unit tests anchored on the RFC 3414 test vector.
+- **Wrong privacy password:** both Hub-R2 (SHA-256/AES-128) and ISP-HUB (SHA-1/AES-128) drop the request silently. Engine discovery succeeds, then the real request times out; neither device sends a `usmStatsDecryptionErrors` report.
+- **Lab tests are capability-aware:** each node in `tests/lab.json` lists the SNMP profiles it supports (`snmpProfiles`), and each profile's tests run only against those nodes.
 
 ## Read-only enforcement (important)
 
@@ -66,8 +75,8 @@ Every source of status (ICMP, default SNMP stats, each custom monitor, backups) 
 ### Inventory
 
 - Nodes with hostname, management IP, site, tags, an icon type (router, switch, firewall, server, generic), and an enabled flag.
-- Reusable **credential profiles**: SSH (username, password; no enable secret, since the account is priv-15) and SNMPv3 (user, SHA-2 auth, AES priv). These are encrypted with DPAPI.
-- "Test connection" buttons for ICMP, SNMP, and SSH separately, with clear error messages (timeout, auth failure, unsupported algorithm, etc.). SNMP testing proves SHA-256/AES-128 first, then SHA-256/AES-256.
+- Reusable **credential profiles**: SSH (username, password; no enable secret, since the account is priv-15) and SNMPv3 (user; SHA-2 auth, or legacy SHA-1; AES priv, with SHA-1 limited to AES-128; default SHA-256/AES-128). These are encrypted with DPAPI.
+- "Test connection" buttons for ICMP, SNMP, and SSH separately, with clear error messages (timeout, auth failure, unsupported algorithm, etc.). SNMP testing proves SHA-256/AES-128 (and legacy SHA-1/AES-128 where a device lacks SHA-2). AES-256 isn't pursued in v1.
 - CSV import and export of nodes. Exports never include secrets.
 
 ### Network map
@@ -187,7 +196,7 @@ Opens when a node is clicked on the map or in a list. It shows:
   - Windows Server install guide
   - Configuration reference
   - A guide to writing custom monitors, with examples
-  - CML lab setup I can reproduce: a minimal topology and the IOS-XE snippets needed for SSH, SNMPv3 authPriv (SHA-256 with AES-128 and AES-256) with a read-only view, and a **privilege-15 local user** for YANMT (no parser view; the app's allowlist is the read-only enforcement)
+  - CML lab setup I can reproduce: a minimal topology and the IOS-XE snippets needed for SSH, SNMPv3 authPriv (SHA-256/AES-128, plus SHA-1/AES-128 for devices without SHA-2) with a read-only view, and a **privilege-15 local user** for YANMT (no parser view; the app's allowlist is the read-only enforcement)
 - `CONTRIBUTING.md`, `SECURITY.md`, and a `.gitignore` that excludes the DB, backups, logs, map images, and lab config files
 - A `CLAUDE.md` at the repo root summarizing these rules (read-only enforcement, the minimal-footprint rule, the package allowlist, no hard-coded monitoring beyond the defaults, and secrets handling) so future sessions follow them
 

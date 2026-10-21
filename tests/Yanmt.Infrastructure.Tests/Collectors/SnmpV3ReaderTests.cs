@@ -32,22 +32,45 @@ public class SnmpV3ReaderTests
     private static SnmpTarget Target(FakeSnmpAgent agent, SnmpV3Credential cred, double timeoutSeconds = 2) =>
         new(IPAddress.Loopback, agent.EndPoint.Port, cred, TimeSpan.FromSeconds(timeoutSeconds));
 
-    public static TheoryData<SnmpAuthProtocol, SnmpPrivProtocol> AllCombinations()
+    /// <summary>Every pairing a profile may use: SHA-2 with any AES, SHA-1 (legacy) with AES-128 only.</summary>
+    public static TheoryData<SnmpAuthProtocol, SnmpPrivProtocol> AllowedCombinations()
     {
         var data = new TheoryData<SnmpAuthProtocol, SnmpPrivProtocol>();
         foreach (var a in Enum.GetValues<SnmpAuthProtocol>())
         {
             foreach (var p in Enum.GetValues<SnmpPrivProtocol>())
             {
-                data.Add(a, p);
+                if (CredentialRules.ValidateSnmpProtocols(a, p) is null)
+                {
+                    data.Add(a, p);
+                }
             }
         }
 
         return data;
     }
 
+    [Fact]
+    public void Allowed_combinations_are_sha2_with_any_aes_and_sha1_with_aes128() =>
+        Assert.Equal(10, AllowedCombinations().Count);
+
     [Theory]
-    [MemberData(nameof(AllCombinations))]
+    [InlineData(SnmpPrivProtocol.Aes192)]
+    [InlineData(SnmpPrivProtocol.Aes256)]
+    public async Task Sha1_with_long_aes_is_refused_before_anything_is_sent(SnmpPrivProtocol priv)
+    {
+        using var agent = Agent(Cred(SnmpAuthProtocol.Sha1, SnmpPrivProtocol.Aes128));
+
+        var ex = await Assert.ThrowsAsync<SnmpQueryException>(() =>
+            new SnmpV3Reader().GetAsync(Target(agent, Cred(SnmpAuthProtocol.Sha1, priv)), [SysDescr], Ct));
+
+        Assert.Equal(FailureCategory.UnsupportedAlgorithm, ex.Category);
+        Assert.Equal(0, agent.GetRequestsAnswered);
+        Assert.Empty(agent.RejectedRequests);
+    }
+
+    [Theory]
+    [MemberData(nameof(AllowedCombinations))]
     public async Task Get_round_trips_through_authPriv(SnmpAuthProtocol auth, SnmpPrivProtocol priv)
     {
         var cred = Cred(auth, priv);
@@ -61,6 +84,30 @@ public class SnmpV3ReaderTests
         Assert.Equal("Cisco IOS XE Software, Version 17.12.04", result.Values[0].Text);
         Assert.Equal("lab-rtr-hub-01", result.Values[1].Text);
         Assert.All(result.Values, v => Assert.False(v.IsMissing));
+    }
+
+    [Theory]
+    [InlineData(SnmpAuthProtocol.Sha1)]
+    [InlineData(SnmpAuthProtocol.Sha256)]
+    public async Task Repeated_gets_with_the_same_auth_password_keep_working(SnmpAuthProtocol auth)
+    {
+        // Regression for the lab's SHA-256/AES-256 wrongDigests: after one verified response, a
+        // second user with the same auth password on the same engine was signed with a zeroed key.
+        var first = Cred(auth, SnmpPrivProtocol.Aes128);
+        using (var agent = Agent(first))
+        {
+            await new SnmpV3Reader().GetAsync(Target(agent, first), [SysDescr], Ct);
+            await new SnmpV3Reader().GetAsync(Target(agent, first), [SysDescr], Ct);
+            Assert.Equal(2, agent.GetRequestsAnswered);
+        }
+
+        var second = Cred(auth, auth == SnmpAuthProtocol.Sha1 ? SnmpPrivProtocol.Aes128 : SnmpPrivProtocol.Aes256, user: "yanmt-ro-2");
+        using (var agent = Agent(second))
+        {
+            await new SnmpV3Reader().GetAsync(Target(agent, second), [SysDescr], Ct);
+            Assert.Equal(0, agent.WrongDigestsSent);
+            Assert.Equal(1, agent.GetRequestsAnswered);
+        }
     }
 
     [Fact]
@@ -128,6 +175,7 @@ public class SnmpV3ReaderTests
     }
 
     [Theory]
+    [InlineData(SnmpAuthProtocol.Sha1)]
     [InlineData(SnmpAuthProtocol.Sha256)]
     [InlineData(SnmpAuthProtocol.Sha512)]
     public async Task Response_with_a_bad_hmac_is_discarded(SnmpAuthProtocol auth)
@@ -153,7 +201,26 @@ public class SnmpV3ReaderTests
 
         var ex = await Assert.ThrowsAsync<SnmpQueryException>(() => new SnmpV3Reader().GetAsync(Target(agent, cred, 0.5), [SysDescr], Ct));
 
+        // IOS-XE drops a wrong-privacy-password request this way, so the message must point at that, not at reachability.
         Assert.Equal(FailureCategory.Timeout, ex.Category);
+        Assert.Contains("answered SNMPv3 discovery but not the request", ex.Message);
+        Assert.Contains("privacy password", ex.Message);
+        Assert.DoesNotContain("reachability", ex.Message);
+    }
+
+    [Fact]
+    public async Task No_answer_to_discovery_is_a_plain_timeout()
+    {
+        // A bound socket that never answers: discovery itself times out.
+        using var silent = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+        var port = ((IPEndPoint)silent.Client.LocalEndPoint!).Port;
+        var target = new SnmpTarget(IPAddress.Loopback, port, Cred(SnmpAuthProtocol.Sha256, SnmpPrivProtocol.Aes128), TimeSpan.FromSeconds(0.5));
+
+        var ex = await Assert.ThrowsAsync<SnmpQueryException>(() => new SnmpV3Reader().GetAsync(target, [SysDescr], Ct));
+
+        Assert.Equal(FailureCategory.Timeout, ex.Category);
+        Assert.Contains("Check reachability", ex.Message);
+        Assert.DoesNotContain("privacy password", ex.Message);
     }
 
     [Fact]

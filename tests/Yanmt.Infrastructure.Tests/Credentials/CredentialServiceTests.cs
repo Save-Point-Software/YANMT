@@ -247,4 +247,60 @@ public class CredentialServiceTests
         Assert.Equal(["lab-v3"], (await svc.OptionsAsync(CredentialKind.SnmpV3, Ct)).Select(o => o.Name));
         Assert.Equal(["lab-ssh"], (await svc.OptionsAsync(CredentialKind.Ssh, Ct)).Select(o => o.Name));
     }
+
+    [Fact]
+    public void New_snmp_profiles_default_to_sha256_aes128()
+    {
+        var model = new CredentialEditModel();
+
+        Assert.Equal(CredentialKind.SnmpV3, model.Kind);
+        Assert.Equal(SnmpAuthProtocol.Sha256, model.SnmpAuth);
+        Assert.Equal(SnmpPrivProtocol.Aes128, model.SnmpPriv);
+    }
+
+    [Fact]
+    public async Task Legacy_sha1_profile_saves_with_aes128_and_is_flagged()
+    {
+        await using var test = await TestDatabase.CreateAsync();
+        var svc = Service(test);
+        var model = Snmp("isp-sha1");
+        model.Username = "yanmt-sha1";
+        model.SnmpAuth = SnmpAuthProtocol.Sha1;
+        var id = await CreateAsync(svc, model);
+
+        var loaded = await svc.LoadSnmpAsync(id, Ct);
+        Assert.Equal(SnmpAuthProtocol.Sha1, loaded!.Value.Credential.Auth);
+        Assert.Equal(SnmpPrivProtocol.Aes128, loaded.Value.Credential.Priv);
+        Assert.Equal("isp-sha1 (SHA-1, legacy)", Assert.Single(await svc.OptionsAsync(CredentialKind.SnmpV3, Ct)).Display);
+        Assert.Contains("SHA-1 (legacy)/AES-128", Assert.Single(await svc.ListAsync(Ct)).Description);
+    }
+
+    [Theory]
+    [InlineData(SnmpPrivProtocol.Aes192)]
+    [InlineData(SnmpPrivProtocol.Aes256)]
+    public async Task Sha1_with_long_aes_is_refused(SnmpPrivProtocol priv)
+    {
+        await using var test = await TestDatabase.CreateAsync();
+        var model = Snmp("isp-sha1");
+        model.SnmpAuth = SnmpAuthProtocol.Sha1;
+        model.SnmpPriv = priv;
+
+        var result = await Service(test).CreateAsync(model, Ct);
+
+        Assert.False(result.Ok);
+        Assert.Equal(nameof(CredentialEditModel.SnmpPriv), result.Field);
+        Assert.Contains("AES-128", result.Error);
+    }
+
+    [Fact]
+    public async Task Unverified_privacy_is_flagged_in_the_picker()
+    {
+        await using var test = await TestDatabase.CreateAsync();
+        var svc = Service(test);
+        var model = Snmp("lab-a256");
+        model.SnmpPriv = SnmpPrivProtocol.Aes256;
+        await CreateAsync(svc, model);
+
+        Assert.Equal("lab-a256 (AES-256, not verified on IOS-XE)", Assert.Single(await svc.OptionsAsync(CredentialKind.SnmpV3, Ct)).Display);
+    }
 }

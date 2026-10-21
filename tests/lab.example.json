@@ -1,13 +1,13 @@
 {
   "nodes": [
-    { "hostname": "lab-rtr-hub-01", "managementIp": "192.0.2.11" },
-    { "hostname": "lab-rtr-spoke-01", "managementIp": "192.0.2.21" },
-    { "hostname": "lab-sw-access-01", "managementIp": "192.0.2.31" }
+    { "hostname": "lab-rtr-hub-01", "managementIp": "192.0.2.11", "snmpProfiles": ["sha256Aes128"] },
+    { "hostname": "lab-rtr-spoke-01", "managementIp": "192.0.2.21", "snmpProfiles": ["sha256Aes128"] },
+    { "hostname": "lab-rtr-isp-01", "managementIp": "192.0.2.41", "snmpProfiles": ["sha1Aes128"] }
   ],
   "snmp": {
     "port": 161,
     "sha256Aes128": { "user": "yanmt-ro-a128", "authPassword": "CHANGE-ME-auth", "privPassword": "CHANGE-ME-priv" },
-    "sha256Aes256": { "user": "yanmt-ro-a256", "authPassword": "CHANGE-ME-auth", "privPassword": "CHANGE-ME-priv" }
+    "sha1Aes128": { "user": "yanmt-sha1", "authPassword": "CHANGE-ME-auth", "privPassword": "CHANGE-ME-priv" }
   },
   "ssh": { "port": 22, "username": "yanmt", "password": "CHANGE-ME-ssh" }
 }

@@ -3,7 +3,7 @@ using Xunit.v3;
 
 namespace Yanmt.Integration.Tests;
 
-/// <summary>Runs a class's tests in name order, so "1_…" runs before "2_…" (SHA-256/AES-128 before AES-256).</summary>
+/// <summary>Runs a class's tests in name order, so "1_…" runs before "2_…" (SHA-256/AES-128 before SHA-1, then the error cases).</summary>
 public sealed class AlphabeticalOrderer : ITestCaseOrderer
 {
     public IReadOnlyCollection<TTestCase> OrderTestCases<TTestCase>(IReadOnlyCollection<TTestCase> testCases)

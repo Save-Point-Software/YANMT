@@ -78,7 +78,7 @@
                         <option value="">(none)</option>
                         @foreach (var p in _snmpProfiles)
                         {
-                            <option value="@p.Id">@p.Name</option>
+                            <option value="@p.Id">@p.Display</option>
                         }
                     </InputSelect>
                     <ValidationMessage For="() => _model.SnmpProfileId" />

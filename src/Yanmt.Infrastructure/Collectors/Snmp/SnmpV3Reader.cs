@@ -22,6 +22,7 @@ public sealed class SnmpV3Reader : ISnmpReader
         var endpoint = new IPEndPoint(target.Address, target.Port);
         var privacy = CreatePrivacy(target.Credential);
         var user = new OctetString(target.Credential.Username);
+        var discovered = false;
 
         try
         {
@@ -29,6 +30,7 @@ public sealed class SnmpV3Reader : ISnmpReader
                 ct => Messenger.GetNextDiscovery(SnmpType.GetRequestPdu).GetResponseAsync(endpoint, ct), target.Timeout, cancellationToken);
             var engineParameters = report.Parameters
                 ?? throw new SnmpQueryException(FailureCategory.UnknownEngine, "The device's discovery report had no security parameters.");
+            discovered = true;
             var engine = new SnmpEngineInfo(
                 engineParameters.EngineId?.ToHexString() ?? "", engineParameters.EngineBoots?.ToInt32() ?? 0, engineParameters.EngineTime?.ToInt32() ?? 0);
 
@@ -81,6 +83,14 @@ public sealed class SnmpV3Reader : ISnmpReader
         {
             throw;
         }
+        catch (System.TimeoutException ex) when (discovered)
+        {
+            // Lab-verified on IOS-XE: a request with the wrong privacy password is dropped silently,
+            // with no usmStatsDecryptionErrors report, so this is how that mistake shows up.
+            throw new SnmpQueryException(FailureCategory.Timeout,
+                $"{endpoint} answered SNMPv3 discovery but not the request within {target.Timeout.TotalSeconds:0.#} s. " +
+                "This is most likely a wrong privacy password or privacy protocol (IOS-XE drops these silently, with no error report).", ex);
+        }
         catch (System.TimeoutException ex)
         {
             throw new SnmpQueryException(FailureCategory.Timeout,
@@ -117,8 +127,17 @@ public sealed class SnmpV3Reader : ISnmpReader
 
     internal static IPrivacyProvider CreatePrivacy(SnmpV3Credential credential)
     {
+        // SHA-1 with AES-192/256 would need a non-standard key extension; refuse rather than guess.
+        if (CredentialRules.ValidateSnmpProtocols(credential.Auth, credential.Priv) is { } pairing)
+        {
+            throw new SnmpQueryException(FailureCategory.UnsupportedAlgorithm, pairing);
+        }
+
         IAuthenticationProvider auth = credential.Auth switch
         {
+#pragma warning disable CS0618 // Legacy SHA-1 is a deliberate, UI-flagged option for devices without SHA-2 (docs/SPEC.md).
+            SnmpAuthProtocol.Sha1 => new SHA1AuthenticationProvider(new OctetString(credential.AuthPassword)),
+#pragma warning restore CS0618
             SnmpAuthProtocol.Sha256 => new SHA256AuthenticationProvider(new OctetString(credential.AuthPassword)),
             SnmpAuthProtocol.Sha384 => new SHA384AuthenticationProvider(new OctetString(credential.AuthPassword)),
             SnmpAuthProtocol.Sha512 => new SHA512AuthenticationProvider(new OctetString(credential.AuthPassword)),

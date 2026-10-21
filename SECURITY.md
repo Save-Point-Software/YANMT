@@ -11,7 +11,8 @@ commit, what you found, and how to reproduce it. I'll acknowledge within a week.
 - **Read-only device access.** YANMT never changes device configuration. SSH commands are limited
   to an explicit allowlist enforced before anything is sent, and tests fail if config-mode or write
   commands appear in the SSH layer. SNMP has no SET code path. A bypass of either is a security bug.
-- **SNMPv3 responses are authenticated.** YANMT checks the USM HMAC (SHA-2) of every response, plus
+- **SNMPv3 responses are authenticated.** YANMT checks the USM HMAC (SHA-2, or HMAC-SHA-96
+  for legacy SHA-1 profiles) of every response, plus
   the authPriv flags, user, and engine ID, and discards anything that fails.
 - **SSH host keys are pinned** on first use. A changed key is refused until an admin explicitly trusts it.
 - **Credentials** are encrypted at rest with DPAPI (machine scope, plus entropy from an ACL-restricted

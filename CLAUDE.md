@@ -23,6 +23,12 @@ non-trivial work. The owner is a CCNP-level network engineer: don't explain netw
   `Collectors/Snmp`, behind `ISnmpReader`.
   - SharpSnmpLib does not verify response HMACs. Every SNMPv3 response must pass
     `UsmAuthentication.Verify` (and the authPriv/user/engine checks in `SnmpV3Reader`) before use.
+  - SharpSnmpLib caches localized keys process-wide and returns the cached array. Never modify a
+    byte array it returns (zeroing one broke every later request with that password and engine).
+  - Supported crypto: **SHA-256/AES-128** is the verified v1 pairing and the default. **SHA-1**
+    (HMAC-SHA-96) is a legacy option, AES-128 only, flagged "legacy" in the UI. SHA-384/512 and
+    AES-192/256 exist, but AES-192/256 are flagged "not verified on IOS-XE". **Never add MD5 or DES.**
+    Lab results and the AES-256 decision are in `docs/SPEC.md` (*SNMPv3 lab results*).
 
 ### 2. Minimal server footprint
 - Nothing installed on the server but YANMT: no .NET runtime install, IIS, DB server, Python,
@@ -64,6 +70,7 @@ everything else comes from user-defined custom monitors (the starter library shi
   `dotnet ef migrations add <Name> -p src/Yanmt.Infrastructure -s src/Yanmt.Infrastructure -o Data/Migrations`.
   The test `Model_has_no_changes_missing_from_migrations` catches a forgotten migration.
 - Tests run on Microsoft.Testing.Platform (`global.json`): `dotnet test`. Integration tests carry
-  `[Trait("Category","Integration")]` and skip unless `tests/lab.json` exists.
+  `[Trait("Category","Integration")]` and skip unless `tests/lab.json` exists. SNMP lab tests are
+  capability-aware: a profile runs only against nodes whose `snmpProfiles` list it.
 - Work in phases (see `docs/SPEC.md`), and stop at the end of each phase for lab testing.
 - When something touching device access or security is ambiguous, ask rather than guess.

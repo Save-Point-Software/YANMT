@@ -16,10 +16,19 @@ public sealed record CredentialListItem(
 {
     public string Description => Kind == CredentialKind.Ssh
         ? $"SSH, port {Port}"
-        : $"SNMPv3 authPriv {CredentialRules.Describe(SnmpAuth!.Value)}/{CredentialRules.Describe(SnmpPriv!.Value)}, port {Port}";
+        : $"SNMPv3 authPriv {CredentialRules.Label(SnmpAuth!.Value)}/{CredentialRules.Label(SnmpPriv!.Value)}, port {Port}";
 }
 
-public sealed record CredentialOption(int Id, string Name);
+/// <summary>A profile for a picker. Note flags legacy SHA-1 or a privacy protocol not verified on IOS-XE.</summary>
+public sealed record CredentialOption(int Id, string Name, string? Note = null)
+{
+    public string Display => Note is null ? Name : $"{Name} ({Note})";
+
+    internal static string? NoteFor(SnmpAuthProtocol? auth, SnmpPrivProtocol? priv) =>
+        auth is { } a && CredentialRules.IsLegacy(a) ? $"{CredentialRules.Describe(a)}, legacy"
+        : priv is { } p && !CredentialRules.IsVerifiedOnIosXe(p) ? $"{CredentialRules.Describe(p)}, not verified on IOS-XE"
+        : null;
+}
 
 public sealed record DeleteProfileResult(bool Ok, IReadOnlyList<string> UsedBy);
 
@@ -40,7 +49,7 @@ public sealed class CredentialEditModel : IValidatableObject
     public string Username { get; set; } = "";
     public int Port { get; set; } = CredentialRules.DefaultSnmpPort;
     public SnmpAuthProtocol SnmpAuth { get; set; } = SnmpAuthProtocol.Sha256;
-    public SnmpPrivProtocol SnmpPriv { get; set; } = SnmpPrivProtocol.Aes256;
+    public SnmpPrivProtocol SnmpPriv { get; set; } = SnmpPrivProtocol.Aes128;
 
     public string? Password { get; set; }
     public string? AuthPassword { get; set; }
@@ -69,6 +78,11 @@ public sealed class CredentialEditModel : IValidatableObject
             {
                 yield return new ValidationResult(error, [member]);
             }
+        }
+
+        if (Kind == CredentialKind.SnmpV3 && CredentialRules.ValidateSnmpProtocols(SnmpAuth, SnmpPriv) is { } pairing)
+        {
+            yield return new ValidationResult(pairing, [nameof(SnmpPriv)]);
         }
 
         var secrets = Kind == CredentialKind.Ssh

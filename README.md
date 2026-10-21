@@ -53,8 +53,10 @@ never written to the audit log. **Back up `secrets.entropy` together with `yanmt
 on a different server, stored passwords can't be decrypted. The profile page says so, and you
 re-enter them (a passphrase export/import arrives in phase 6).
 
-- **SNMPv3:** authPriv only, SHA-256/384/512 auth, AES-128/192/256 privacy. YANMT verifies the HMAC
-  of every response itself, because SharpSnmpLib doesn't.
+- **SNMPv3:** authPriv only. **SHA-256/AES-128** is the verified pairing on IOS-XE and the default.
+  SHA-1 is offered as a *legacy* option for devices without SHA-2 auth, and only with AES-128. There's
+  no MD5 or DES. AES-192/256 are selectable but marked "not verified on IOS-XE" (see `docs/SPEC.md`,
+  *SNMPv3 lab results*). YANMT verifies the HMAC of every response itself, because SharpSnmpLib doesn't.
 - **SSH:** username and password for a plain privilege-15 local user. The SSH host key is pinned on the
   first successful connection (trust on first use). A later mismatch is refused until an admin trusts
   the new key from the node page.
@@ -93,7 +95,9 @@ line vty 0 4
 snmp-server view YANMT-RO iso included
 snmp-server group YANMT-RO v3 priv read YANMT-RO
 snmp-server user yanmt-ro-a128 YANMT-RO v3 auth sha-2 256 <auth-password> priv aes 128 <priv-password>
-snmp-server user yanmt-ro-a256 YANMT-RO v3 auth sha-2 256 <auth-password> priv aes 256 <priv-password>
+!
+! Only on devices without SHA-2 auth (legacy):
+snmp-server user yanmt-sha1 YANMT-RO v3 auth sha <auth-password> priv aes 128 <priv-password>
 ```
 
 The SHA-2 keyword differs between IOS-XE releases. Check `snmp-server user x YANMT-RO v3 auth ?` on
@@ -102,6 +106,11 @@ your image. SNMPv3 passwords must be at least 8 characters. `snmp-server user` l
 
 To run the opt-in integration tests, copy `tests/lab.example.json` to `tests/lab.json` (gitignored),
 fill in node addresses and the lab credentials, then run `dotnet test --project tests/Yanmt.Integration.Tests`.
+
+Each node lists the SNMP profiles it's configured for in `snmpProfiles`: `sha256Aes128`,
+`sha1Aes128`, or `sha256Aes256` (whose test is skipped in v1). A profile's tests run only against the
+nodes that list it, and skip when none do. An unknown key, or one with no matching `snmp` entry, is
+an error. SSH and ping tests run on every node.
 
 ## License
 

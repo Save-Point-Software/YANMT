@@ -33,8 +33,35 @@ public sealed class LabConfig
             return null;
         }
 
-        return JsonSerializer.Deserialize<LabConfig>(File.ReadAllText(path), new JsonSerializerOptions(JsonSerializerDefaults.Web))
-               ?? throw new InvalidOperationException($"{path} is empty or not valid JSON.");
+        var lab = JsonSerializer.Deserialize<LabConfig>(File.ReadAllText(path), new JsonSerializerOptions(JsonSerializerDefaults.Web))
+                  ?? throw new InvalidOperationException($"{path} is empty or not valid JSON.");
+        lab.Validate(path);
+        return lab;
+    }
+
+    /// <summary>Nodes whose snmpProfiles list includes this profile key.</summary>
+    public IReadOnlyList<LabNode> NodesFor(string snmpProfile) =>
+        Nodes.Where(n => n.SnmpProfiles.Contains(snmpProfile, StringComparer.OrdinalIgnoreCase)).ToList();
+
+    /// <summary>A typo in a profile key would silently skip tests, so it's an error instead.</summary>
+    private void Validate(string path)
+    {
+        foreach (var node in Nodes)
+        {
+            foreach (var key in node.SnmpProfiles)
+            {
+                if (!LabSnmp.Keys.Contains(key, StringComparer.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        $"{path}: node {node.Hostname} lists unknown SNMP profile '{key}'. Known: {string.Join(", ", LabSnmp.Keys)}.");
+                }
+
+                if (Snmp?.Profile(key) is null)
+                {
+                    throw new InvalidOperationException($"{path}: node {node.Hostname} lists SNMP profile '{key}', but snmp.{key} isn't defined.");
+                }
+            }
+        }
     }
 
     private static string? FindDefault()
@@ -55,13 +82,36 @@ public sealed class LabNode
 {
     public string Hostname { get; set; } = "";
     public string ManagementIp { get; set; } = "";
+
+    /// <summary>The SNMP profile keys (see LabSnmp.Keys) this node is configured for. Empty: no SNMP tests.</summary>
+    public List<string> SnmpProfiles { get; set; } = [];
 }
 
+/// <summary>One SNMPv3 user per auth/priv pairing; nodes opt in to each by key.</summary>
 public sealed class LabSnmp
 {
+    public const string Sha256Aes128Key = "sha256Aes128";
+    public const string Sha1Aes128Key = "sha1Aes128";
+    public const string Sha256Aes256Key = "sha256Aes256";
+
+    public static readonly string[] Keys = [Sha256Aes128Key, Sha1Aes128Key, Sha256Aes256Key];
+
     public int Port { get; set; } = 161;
     public LabSnmpUser? Sha256Aes128 { get; set; }
+
+    /// <summary>Legacy SHA-1 (HMAC-SHA-96) with AES-128, for devices without SHA-2.</summary>
+    public LabSnmpUser? Sha1Aes128 { get; set; }
+
+    /// <summary>Not supported in v1 (IOS-XE refused it in the lab); its test is skipped.</summary>
     public LabSnmpUser? Sha256Aes256 { get; set; }
+
+    public LabSnmpUser? Profile(string key) => key.ToLowerInvariant() switch
+    {
+        "sha256aes128" => Sha256Aes128,
+        "sha1aes128" => Sha1Aes128,
+        "sha256aes256" => Sha256Aes256,
+        _ => null,
+    };
 }
 
 public sealed class LabSnmpUser

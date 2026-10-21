@@ -31,11 +31,12 @@ public sealed class CredentialService(IDbContextFactory<YanmtDbContext> dbFactor
     public async Task<List<CredentialOption>> OptionsAsync(CredentialKind kind, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        return await db.CredentialProfiles.AsNoTracking()
+        var profiles = await db.CredentialProfiles.AsNoTracking()
             .Where(p => p.Kind == kind)
             .OrderBy(p => p.Name)
-            .Select(p => new CredentialOption(p.Id, p.Name))
+            .Select(p => new { p.Id, p.Name, p.SnmpAuth, p.SnmpPriv })
             .ToListAsync(cancellationToken);
+        return profiles.Select(p => new CredentialOption(p.Id, p.Name, CredentialOption.NoteFor(p.SnmpAuth, p.SnmpPriv))).ToList();
     }
 
     /// <summary>The profile's non-secret fields. Secret fields are left empty.</summary>
@@ -57,7 +58,7 @@ public sealed class CredentialService(IDbContextFactory<YanmtDbContext> dbFactor
             Username = p.Username,
             Port = p.Port,
             SnmpAuth = p.SnmpAuth ?? SnmpAuthProtocol.Sha256,
-            SnmpPriv = p.SnmpPriv ?? SnmpPrivProtocol.Aes256,
+            SnmpPriv = p.SnmpPriv ?? SnmpPrivProtocol.Aes128,
         };
     }
 

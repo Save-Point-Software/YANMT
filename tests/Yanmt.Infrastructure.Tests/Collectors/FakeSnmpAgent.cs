@@ -25,10 +25,12 @@ internal sealed class FakeSnmpAgent : IDisposable
     private readonly CancellationTokenSource _stop = new();
     private readonly Task _loop;
     private readonly SnmpV3Credential _credential;
+    private readonly byte[] _authKey;
 
     public FakeSnmpAgent(SnmpV3Credential credential, IReadOnlyDictionary<string, ISnmpData> values)
     {
         _credential = credential;
+        _authKey = Rfc3414Keys.Localize(credential.Auth, credential.AuthPassword, EngineId.GetRaw());
         var user = credential.Username;
         var agentPrivacy = SnmpV3Reader.CreatePrivacy(credential);
         if (_users.Find(OctetString.Empty) is null)
@@ -116,7 +118,8 @@ internal sealed class FakeSnmpAgent : IDisposable
             return Report(request, ReportOid);
         }
 
-        if (!UsmAuthentication.Verify(datagram, request, _credential))
+        // Checked with an independently derived key, as a real agent would: never the library's cached one.
+        if (!UsmAuthentication.Verify(datagram, request, _credential.Auth, _authKey))
         {
             WrongDigestsSent++;
             return Report(request, "1.3.6.1.6.3.15.1.1.5.0"); // usmStatsWrongDigests
