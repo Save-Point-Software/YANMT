@@ -104,6 +104,13 @@ Polled on every SNMP-enabled node with no setup. Default interval is 5 minutes, 
 
 CPU and memory have default Warning and Critical thresholds that can be changed globally or per node. **Nothing else is hard-coded.** Interface, BGP, tunnel, or any other monitoring comes from custom monitors.
 
+Phase 3 decisions:
+
+- **Reboots:** a detected reboot (snmpEngineBoots up, or sysUpTime backwards away from its wrap) logs an event, and the node shows **Warning until the next SNMP poll**.
+- **Live tools:** the interfaces tab and the SNMP query tool are open to **viewers and admins**. Both are read-only and bounded; a walk stops at 2,000 rows.
+- **CPU** is the busiest CPU's `cpmCPUTotal5minRev`. **Memory** is the `Processor` pool, preferring HC counters.
+- **Failed polls:** one event on the Uptime source. CPU and memory go Unknown quietly. A device lacking the CPU or memory MIB has no such source, rather than staying Unknown.
+
 ### SNMPv3: custom monitors (the core feature)
 
 Modeled on SNMPc's user-defined polling and trend expressions. An admin can define a monitor that polls any OID and turns its value into a state.

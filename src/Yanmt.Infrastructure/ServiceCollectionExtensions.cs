@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Yanmt.Core.Oids;
 using Yanmt.Infrastructure.Collectors.Icmp;
 using Yanmt.Infrastructure.Collectors.Snmp;
 using Yanmt.Infrastructure.Collectors.Ssh;
@@ -52,6 +53,11 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<StatusCache>();
         services.AddSingleton<StatusBroadcaster>();
         services.AddScoped<MapService>();
+        services.AddSingleton<IOidNameResolver>(BuiltInOidNames.Instance);
+        services.AddScoped<SnmpTargetResolver>();
+        services.AddScoped<InterfaceService>();
+        services.AddScoped<SnmpQueryService>();
+        services.AddScoped<NodeDetailService>();
         return services;
     }
 
@@ -69,7 +75,9 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<TimeProvider>(),
             sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<StatusEngine>>()));
         services.AddHostedService<StatusEngineService>();
+        services.AddSingleton<DefaultStatsCollector>();
         services.AddHostedService<IcmpPoller>();
+        services.AddHostedService<SnmpPoller>();
         return services;
     }
 }

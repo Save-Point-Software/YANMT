@@ -1,8 +1,11 @@
 @page "/nodes/new"
 @page "/nodes/{Id:int}"
 @attribute [Authorize(Policy = YanmtPolicies.Admin)]
+@using System.Globalization
+@using Yanmt.Core.Monitoring
 @inject NodeService Nodes
 @inject CredentialService Credentials
+@inject SettingsService Settings
 @inject NavigationManager Nav
 
 <PageTitle>@(IsNew ? "Add node" : $"Edit {_originalHostname}") - YANMT</PageTitle>
@@ -100,6 +103,31 @@
                 <div class="hint">Profiles are managed under <a href="credentials">Credentials</a>.</div>
             }
 
+            <fieldset class="thresholds">
+                <legend>CPU and memory thresholds (%)</legend>
+                <div class="field-row">
+                    <div class="field narrow-field">
+                        <label for="cpu-warn">CPU Warning</label>
+                        <InputNumber id="cpu-warn" @bind-Value="_model.CpuWarningPercent" placeholder="@_snmp.CpuWarningPercent.ToString(CultureInfo.InvariantCulture)" />
+                    </div>
+                    <div class="field narrow-field">
+                        <label for="cpu-crit">CPU Critical</label>
+                        <InputNumber id="cpu-crit" @bind-Value="_model.CpuCriticalPercent" placeholder="@_snmp.CpuCriticalPercent.ToString(CultureInfo.InvariantCulture)" />
+                    </div>
+                    <div class="field narrow-field">
+                        <label for="mem-warn">Memory Warning</label>
+                        <InputNumber id="mem-warn" @bind-Value="_model.MemoryWarningPercent" placeholder="@_snmp.MemoryWarningPercent.ToString(CultureInfo.InvariantCulture)" />
+                    </div>
+                    <div class="field narrow-field">
+                        <label for="mem-crit">Memory Critical</label>
+                        <InputNumber id="mem-crit" @bind-Value="_model.MemoryCriticalPercent" placeholder="@_snmp.MemoryCriticalPercent.ToString(CultureInfo.InvariantCulture)" />
+                    </div>
+                </div>
+                <ValidationMessage For="() => _model.CpuWarningPercent" />
+                <ValidationMessage For="() => _model.MemoryWarningPercent" />
+                <div class="hint">Blank uses the global value from <a href="settings">Settings</a> (shown greyed). If a node's Warning ends up at or above its Critical, it just goes straight to Critical.</div>
+            </fieldset>
+
             @if (_error is not null)
             {
                 <p class="error">@_error</p>
@@ -152,8 +180,11 @@
 
     private bool IsNew => Id is null;
 
+    private SnmpSettings _snmp = new();
+
     protected override async Task OnParametersSetAsync()
     {
+        _snmp = await Settings.GetAsync(SettingKeys.Snmp);
         _tags = await Nodes.AllTagsAsync();
         _sites = await Nodes.AllSitesAsync();
         _snmpProfiles = await Credentials.OptionsAsync(CredentialKind.SnmpV3);

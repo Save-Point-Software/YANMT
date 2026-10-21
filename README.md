@@ -8,7 +8,7 @@ nodes whose colors come from ICMP, SNMPv3, and user-defined monitors, with drill
 > to an allowlist of `show` commands enforced in code and by tests; SNMP is GET/GETNEXT/GETBULK/WALK
 > only, with no SET code path at all.
 
-**Status:** under development, phase 2 of 6 (inventory, credentials, Test Connection, ICMP polling, and the live map). See
+**Status:** under development, phase 3 of 6 (inventory, credentials, ICMP and SNMPv3 default-stats polling, the live map, and the node detail page). See
 [`docs/SPEC.md`](docs/SPEC.md) for the full v1 scope.
 
 ## Requirements
@@ -45,8 +45,54 @@ in later phases) are edited in the UI and stored in the database. Every change i
 pollers pick up a change within a few seconds.
 
 Bootstrap polling limits live in `appsettings.json` under `Yanmt:Polling`: `IcmpConcurrency`
-(bursts in flight at once, default 32) and `ReloadSeconds` (how often targets are re-read even
-without a change, default 300).
+(bursts in flight at once, default 32), `SnmpConcurrency` (default-stats polls in flight, default
+16), and `ReloadSeconds` (how often targets are re-read even without a change, default 300).
+
+### SNMP default stats
+
+Every enabled node with SNMP on and an SNMPv3 profile is polled every 5 minutes (configurable), in
+as few requests as possible:
+
+- one GET for the system group;
+- one GETBULK walk for CPU and the enhanced mempool table together;
+- only if that table is empty, a walk of CISCO-MEMORY-POOL-MIB.
+
+Engine discovery is cached per device, so a poll doesn't pay an extra round trip.
+
+- **CPU:** `cpmCPUTotal5minRev`, the busiest CPU if there are several. Warning at 80%, Critical at 90%.
+- **Memory:** the `Processor` pool from CISCO-ENHANCED-MEMPOOL-MIB, using the 64-bit HC counters when
+  filled in, otherwise the 32-bit ones, otherwise CISCO-MEMORY-POOL-MIB. Warning at 80%, Critical at 90%.
+- Both thresholds can be changed globally (Settings) or per node (the node's edit page). There's no
+  dampening: the CPU figure is already a 5-minute average.
+- **Uptime and reboots:** a reboot is detected when snmpEngineBoots goes up, or when sysUpTime goes
+  backwards without being near its 497-day wrap. It logs an event, and the node shows **Warning
+  until the next poll**.
+- **Failed polls:** the Uptime source goes Unknown with one "SNMP poll failed" event; CPU and memory
+  go Unknown quietly. Recovery logs one "recovered" event.
+- **Missing MIBs:** a device without the CPU or memory MIB (or a view that hides it) simply has no
+  CPU or memory source, rather than sitting gray.
+- **System info** (sysDescr, sysName, sysLocation, sysContact) is shown on the node page.
+
+Nothing else is hard-coded: interface, BGP, tunnel, and other monitoring comes from custom monitors
+in phase 4.
+
+### Node page
+
+Click a node on the map or in the list. Its page has these tabs:
+
+- **Overview:** state, IP, uptime, last reboot, system info, every status source, and charts. The
+  charts are hand-built SVG: ICMP latency and loss, CPU, and memory over 1 h, 6 h, 24 h, or 7 d, with
+  each bucket's min/max band, threshold lines, and gaps where polls were missed.
+- **Interfaces:** walks IF-MIB live when you open it (never polled continuously). It shows name,
+  description, alias, admin/oper status, speed, and current in/out rates and utilization from two
+  counter samples 5 s apart. 64-bit counters are used where available.
+- **SNMP query:** GET, GETNEXT, or WALK any OID. Accepts numeric OIDs or names from the built-in
+  table, such as `ifDescr.3` or `IF-MIB::ifHCInOctets`. A WALK stops at 2,000 rows. Read-only:
+  YANMT has no SET.
+- **Events** for the node.
+- **Config backups** (phase 5).
+
+Viewers and admins can both use the Interfaces and SNMP query tabs, since both are read-only.
 
 ### ICMP polling
 

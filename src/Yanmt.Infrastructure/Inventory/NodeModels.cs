@@ -41,6 +41,13 @@ public sealed class NodeEditModel : IValidatableObject
     /// <summary>Read-only display: the pinned SSH host key, if any. Not saved from the form.</summary>
     public string? SshHostKey { get; set; }
 
+    /// <summary>Per-node CPU/memory thresholds in percent; blank uses the global SNMP setting.</summary>
+    public double? CpuWarningPercent { get; set; }
+
+    public double? CpuCriticalPercent { get; set; }
+    public double? MemoryWarningPercent { get; set; }
+    public double? MemoryCriticalPercent { get; set; }
+
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
     {
         foreach (var (error, member) in new[]
@@ -61,6 +68,22 @@ public sealed class NodeEditModel : IValidatableObject
             if (NodeRules.ValidateTag(tag) is { } error)
             {
                 yield return new ValidationResult(error, [nameof(Tags)]);
+            }
+        }
+
+        foreach (var (warning, critical, label, member) in new[]
+        {
+            (CpuWarningPercent, CpuCriticalPercent, "CPU", nameof(CpuWarningPercent)),
+            (MemoryWarningPercent, MemoryCriticalPercent, "Memory", nameof(MemoryWarningPercent)),
+        })
+        {
+            if (warning is < 1 or > 100 || critical is < 1 or > 100)
+            {
+                yield return new ValidationResult($"{label} thresholds must be between 1 and 100%.", [member]);
+            }
+            else if (warning >= critical)
+            {
+                yield return new ValidationResult($"{label} Warning must be below Critical.", [member]);
             }
         }
     }

@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Net;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -12,11 +11,7 @@ using Yanmt.Infrastructure.Settings;
 
 namespace Yanmt.Infrastructure.Monitoring;
 
-/// <summary>
-/// Pings every enabled, ICMP-enabled node on the configured interval. A 1-second tick hands due
-/// nodes to a bounded set of workers; a node already in flight is never started twice, and a slow
-/// or dead node only ever occupies one worker for one burst.
-/// </summary>
+/// <summary>Pings every enabled, ICMP-enabled node on the configured interval.</summary>
 public sealed class IcmpPoller(
     IServiceScopeFactory scopes,
     StatusEngine engine,
@@ -24,65 +19,22 @@ public sealed class IcmpPoller(
     InventoryChangeSignal signal,
     IOptions<PollingOptions> options,
     TimeProvider clock,
-    ILogger<IcmpPoller> logger) : BackgroundService
+    ILogger<IcmpPoller> logger)
+    : NodePoller<IPAddress, IcmpSettings>(scopes, engine, signal, options.Value.IcmpConcurrency, options.Value.ReloadSeconds, clock, logger)
 {
-    private readonly PollSchedule _schedule = new();
-    private readonly ConcurrentDictionary<int, byte> _inFlight = new();
-    private readonly SemaphoreSlim _workers = new(Math.Max(1, options.Value.IcmpConcurrency));
-    private Dictionary<int, IPAddress> _targets = [];
-    private IcmpSettings _settings = new();
-    private long _loadedVersion = -1;
-    private DateTimeOffset _nextReload = DateTimeOffset.MinValue;
+    protected override string Kind => "ICMP";
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override async Task<(IcmpSettings Settings, TimeSpan Interval, IReadOnlyDictionary<int, IPAddress> Targets)> LoadAsync(
+        IServiceProvider services, CancellationToken cancellationToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1), clock);
-        do
-        {
-            try
-            {
-                await TickAsync(stoppingToken);
-            }
-            catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
-            {
-                logger.LogError(ex, "ICMP poller tick failed; retrying on the next tick");
-                _nextReload = DateTimeOffset.MinValue; // reload from scratch next time
-            }
-        }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
-    }
-
-    internal async Task TickAsync(CancellationToken cancellationToken)
-    {
-        var now = clock.GetUtcNow();
-        var version = signal.Version;
-        if (version != _loadedVersion || now >= _nextReload)
-        {
-            await ReloadAsync(now, cancellationToken);
-            _loadedVersion = version;
-            _nextReload = now + TimeSpan.FromSeconds(Math.Max(10, options.Value.ReloadSeconds));
-        }
-
-        foreach (var nodeId in _schedule.TakeDue(now))
-        {
-            if (_targets.TryGetValue(nodeId, out var address) && _inFlight.TryAdd(nodeId, 0))
-            {
-                _ = PollAsync(nodeId, address, _settings, cancellationToken);
-            }
-        }
-    }
-
-    private async Task ReloadAsync(DateTimeOffset now, CancellationToken cancellationToken)
-    {
-        using var scope = scopes.CreateScope();
-        _settings = await scope.ServiceProvider.GetRequiredService<SettingsService>().GetAsync(SettingKeys.Icmp, cancellationToken);
-        if (_settings.Validate().Count > 0)
+        var settings = await services.GetRequiredService<SettingsService>().GetAsync(SettingKeys.Icmp, cancellationToken);
+        if (settings.Validate().Count > 0)
         {
             logger.LogWarning("Stored ICMP settings are invalid; using the defaults");
-            _settings = new IcmpSettings();
+            settings = new IcmpSettings();
         }
 
-        var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<YanmtDbContext>>();
+        var factory = services.GetRequiredService<IDbContextFactory<YanmtDbContext>>();
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var nodes = await db.Nodes.AsNoTracking()
             .Where(n => n.Enabled && n.IcmpEnabled)
@@ -102,63 +54,25 @@ public sealed class IcmpPoller(
             }
         }
 
-        _targets = targets;
-        _schedule.SetTargets(targets.Keys, TimeSpan.FromSeconds(_settings.IntervalSeconds), now);
-        await engine.SyncAsync(cancellationToken);
-        logger.LogInformation("ICMP polling {Count} node(s) every {Interval} s", targets.Count, _settings.IntervalSeconds);
+        return (settings, TimeSpan.FromSeconds(settings.IntervalSeconds), targets);
     }
 
-    private async Task PollAsync(int nodeId, IPAddress address, IcmpSettings settings, CancellationToken cancellationToken)
+    protected override async Task<PollResult> PollAsync(int nodeId, IPAddress target, IcmpSettings settings, DateTime startedUtc, CancellationToken cancellationToken)
     {
-        IcmpPollResult result;
-        try
-        {
-            await _workers.WaitAsync(cancellationToken);
-            try
-            {
-                var started = clock.GetUtcNow().UtcDateTime;
-
-                // Ping honours its own timeout; this is a backstop so a stuck burst can't hold a worker forever.
-                using var guard = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                guard.CancelAfter(settings.WorstCaseBurst + TimeSpan.FromSeconds(10));
-                try
-                {
-                    var icmp = await probe.ProbeAsync(address, settings.EchoCount, TimeSpan.FromMilliseconds(settings.TimeoutMs),
-                        TimeSpan.FromMilliseconds(IcmpSettings.EchoSpacingMs), guard.Token);
-                    result = new IcmpPollResult(nodeId, started, settings, icmp);
-                }
-                catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
-                {
-                    logger.LogWarning(ex, "ICMP poll of node {NodeId} ({Address}) failed", nodeId, address);
-                    result = new IcmpPollResult(nodeId, started, settings, null, ex is OperationCanceledException ? "timed out" : ex.Message);
-                }
-            }
-            finally
-            {
-                _workers.Release();
-            }
-
-            await engine.SubmitAsync(result, cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            // Shutting down.
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "ICMP poll of node {NodeId} could not be queued", nodeId);
-        }
-        finally
-        {
-            _inFlight.TryRemove(nodeId, out _);
-        }
+        var icmp = await probe.ProbeAsync(target, settings.EchoCount, TimeSpan.FromMilliseconds(settings.TimeoutMs),
+            TimeSpan.FromMilliseconds(IcmpSettings.EchoSpacingMs), cancellationToken);
+        return new IcmpPollResult(nodeId, startedUtc, settings, icmp);
     }
 
-    public override void Dispose()
+    protected override PollResult Failed(int nodeId, IPAddress target, IcmpSettings settings, DateTime startedUtc, Exception exception)
     {
-        _workers.Dispose();
-        base.Dispose();
+        // Ping reports loss itself; an exception means something is wrong on this host.
+        logger.LogWarning(exception, "ICMP poll of node {NodeId} ({Address}) failed", nodeId, target);
+        return new IcmpPollResult(nodeId, startedUtc, settings, null, exception is OperationCanceledException ? "timed out" : exception.Message);
     }
+
+    // Ping honours its own timeout; this is a backstop so a stuck burst can't hold a worker forever.
+    protected override TimeSpan Backstop(IcmpSettings settings) => settings.WorstCaseBurst + TimeSpan.FromSeconds(10);
 }
 
 /// <summary>Runs the status engine's queue for the lifetime of the host.</summary>

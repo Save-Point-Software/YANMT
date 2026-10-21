@@ -139,7 +139,7 @@ public class SnmpV3ReaderTests
     }
 
     [Fact]
-    public async Task Not_in_time_window_is_retried_once_then_reported()
+    public async Task Not_in_time_window_is_retried_then_reported()
     {
         var cred = Cred(SnmpAuthProtocol.Sha256, SnmpPrivProtocol.Aes128);
         using var agent = Agent(cred);

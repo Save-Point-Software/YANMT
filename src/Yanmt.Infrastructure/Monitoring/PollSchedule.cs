@@ -8,6 +8,9 @@ public sealed class PollingOptions
     /// <summary>ICMP bursts in flight at once.</summary>
     public int IcmpConcurrency { get; set; } = 32;
 
+    /// <summary>SNMP default-stats polls in flight at once.</summary>
+    public int SnmpConcurrency { get; set; } = 16;
+
     /// <summary>Reload targets at least this often, even without a change signal.</summary>
     public int ReloadSeconds { get; set; } = 300;
 }

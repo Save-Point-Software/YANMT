@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Yanmt.Core.Credentials;
+using Yanmt.Infrastructure.Credentials;
 
 namespace Yanmt.Integration.Tests;
 
@@ -104,6 +106,21 @@ public sealed class LabSnmp
 
     /// <summary>Not supported in v1 (IOS-XE refused it in the lab); its test is skipped.</summary>
     public LabSnmpUser? Sha256Aes256 { get; set; }
+
+    /// <summary>The auth/priv pairing a profile key stands for.</summary>
+    public static (SnmpAuthProtocol Auth, SnmpPrivProtocol Priv) PairingOf(string key) => key.ToLowerInvariant() switch
+    {
+        "sha1aes128" => (SnmpAuthProtocol.Sha1, SnmpPrivProtocol.Aes128),
+        "sha256aes256" => (SnmpAuthProtocol.Sha256, SnmpPrivProtocol.Aes256),
+        _ => (SnmpAuthProtocol.Sha256, SnmpPrivProtocol.Aes128),
+    };
+
+    /// <summary>The credential for a profile key, or null if it isn't defined.</summary>
+    public SnmpV3Credential? Credential(string key)
+    {
+        var (auth, priv) = PairingOf(key);
+        return Profile(key) is { } u ? new SnmpV3Credential(u.User, auth, u.AuthPassword, priv, u.PrivPassword) : null;
+    }
 
     public LabSnmpUser? Profile(string key) => key.ToLowerInvariant() switch
     {

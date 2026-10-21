@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using Lextm.SharpSnmpLib;
@@ -10,8 +11,8 @@ namespace Yanmt.Infrastructure.Tests.Collectors;
 
 /// <summary>
 /// A minimal SNMPv3 agent on loopback, enough to exercise <c>SnmpV3Reader</c> without a lab:
-/// engine discovery, HMAC-checked authPriv GET responses from a fixed table, scripted USM reports,
-/// or silence. Like a real agent, it answers a request with a bad HMAC with usmStatsWrongDigests.
+/// engine discovery, HMAC-checked authPriv GET/GETNEXT/GETBULK responses from a table, the
+/// notInTimeWindow check after an agent "reboot", scripted USM reports, or silence. Like a real agent, it answers a request with a bad HMAC with usmStatsWrongDigests.
 /// It uses SharpSnmpLib's own crypto on both sides, so it proves our wiring and error handling,
 /// not interoperability with IOS-XE (the CML integration tests do that).
 /// </summary>
@@ -39,12 +40,35 @@ internal sealed class FakeSnmpAgent : IDisposable
         }
 
         _users.Add(new OctetString(user), agentPrivacy);
-        Values = values;
+        foreach (var (oid, data) in values)
+        {
+            _table[oid] = data;
+        }
+
         _loop = Task.Run(LoopAsync);
     }
 
+    private readonly ConcurrentDictionary<string, ISnmpData> _table = new();
+
     public IPEndPoint EndPoint => (IPEndPoint)_udp.Client.LocalEndPoint!;
-    public IReadOnlyDictionary<string, ISnmpData> Values { get; }
+
+    /// <summary>Adds or changes an object, e.g. to advance a counter between two samples.</summary>
+    public void Set(string oid, ISnmpData data) => _table[oid] = data;
+
+    /// <summary>The agent's engineBoots. Raising it simulates a reboot: requests carrying the old value get notInTimeWindow.</summary>
+    public int CurrentBoots { get; set; } = Boots;
+
+    /// <summary>Drop everything, discovery included (a dead device).</summary>
+    public bool Silent { get; set; }
+
+    public int DiscoveriesAnswered { get; private set; }
+
+    public int BulkRequestsAnswered { get; private set; }
+
+    public int NextRequestsAnswered { get; private set; }
+
+    /// <summary>Most varbinds put in one GETBULK reply (a real agent truncates to fit its message size).</summary>
+    public int MaxBulkVarbinds { get; set; } = 1000;
 
     /// <summary>When set, answers every non-discovery request with a Report carrying this USM counter OID.</summary>
     public string? ReportOid { get; set; }
@@ -103,8 +127,14 @@ internal sealed class FakeSnmpAgent : IDisposable
 
     private ISnmpMessage? Respond(ISnmpMessage request, byte[] datagram)
     {
+        if (Silent)
+        {
+            return null;
+        }
+
         if (request.Parameters.EngineId is null || request.Parameters.EngineId.GetRaw().Length == 0)
         {
+            DiscoveriesAnswered++;
             return Report(request, "1.3.6.1.6.3.15.1.1.4.0"); // usmStatsUnknownEngineIDs: the discovery reply
         }
 
@@ -125,18 +155,53 @@ internal sealed class FakeSnmpAgent : IDisposable
             return Report(request, "1.3.6.1.6.3.15.1.1.5.0"); // usmStatsWrongDigests
         }
 
+        // RFC 3414 3.2.7: an authentic message with the wrong engineBoots is outside the time window.
+        if (request.Parameters.EngineBoots?.ToInt32() != CurrentBoots)
+        {
+            return Report(request, "1.3.6.1.6.3.15.1.1.2.0"); // usmStatsNotInTimeWindows
+        }
+
         var privacy = SignResponsesWithAuthPassword is null
             ? _users.Find(request.Parameters.UserName)!
             : SnmpV3Reader.CreatePrivacy(new SnmpV3Credential(_credential.Username, _credential.Auth, SignResponsesWithAuthPassword,
                 _credential.Priv, _credential.PrivPassword));
-        var variables = request.Pdu().Variables
-            .Select(v => new Variable(v.Id, Values.TryGetValue(v.Id.ToString(), out var data) ? data : new NoSuchObject()))
-            .ToList();
-        GetRequestsAnswered++;
+        var pdu = request.Pdu();
+        List<Variable> variables;
+        switch (pdu.TypeCode)
+        {
+            case SnmpType.GetNextRequestPdu:
+                variables = pdu.Variables.Select(v => Next(v.Id)).ToList();
+                NextRequestsAnswered++;
+                break;
+            case SnmpType.GetBulkRequestPdu:
+                // SharpSnmpLib carries maxRepetitions in ErrorIndex; YANMT never sends non-repeaters.
+                var repetitions = pdu.ErrorIndex.ToInt32();
+                var cursor = pdu.Variables.Select(v => v.Id).ToArray();
+                variables = [];
+                for (var r = 0; r < repetitions && variables.Count < MaxBulkVarbinds; r++)
+                {
+                    for (var k = 0; k < cursor.Length && variables.Count < MaxBulkVarbinds; k++)
+                    {
+                        var next = Next(cursor[k]);
+                        variables.Add(next);
+                        cursor[k] = next.Id;
+                    }
+                }
+
+                BulkRequestsAnswered++;
+                break;
+            default:
+                variables = pdu.Variables
+                    .Select(v => new Variable(v.Id, _table.TryGetValue(v.Id.ToString(), out var data) ? data : new NoSuchObject()))
+                    .ToList();
+                GetRequestsAnswered++;
+                break;
+        }
+
         return new ResponseMessage(
             VersionCode.V3,
             new Header(new Integer32(request.MessageId()), new Integer32(Messenger.MaxMessageSize), privacy.ToSecurityLevel()),
-            new SecurityParameters(EngineId, new Integer32(Boots), new Integer32(Time), request.Parameters.UserName,
+            new SecurityParameters(EngineId, new Integer32(CurrentBoots), new Integer32(Time), request.Parameters.UserName,
                 privacy.AuthenticationProvider.CleanDigest, privacy.Salt),
             new Scope(EngineId, OctetString.Empty, new ResponsePdu(request.RequestId(), ErrorCode.NoError, 0, variables)),
             privacy,
@@ -147,11 +212,22 @@ internal sealed class FakeSnmpAgent : IDisposable
     private ReportMessage Report(ISnmpMessage request, string oid) => new(
         VersionCode.V3,
         new Header(new Integer32(request.MessageId()), new Integer32(Messenger.MaxMessageSize), 0),
-        new SecurityParameters(EngineId, new Integer32(Boots), new Integer32(Time), OctetString.Empty, OctetString.Empty, OctetString.Empty),
+        new SecurityParameters(EngineId, new Integer32(CurrentBoots), new Integer32(Time), OctetString.Empty, OctetString.Empty, OctetString.Empty),
         new Scope(EngineId, OctetString.Empty,
             new ReportPdu(request.RequestId(), ErrorCode.NoError, 0, [new Variable(new ObjectIdentifier(oid), new Counter32(1))])),
         DefaultPrivacyProvider.DefaultPair,
         null);
+
+    /// <summary>The first object after <paramref name="oid"/> in OID order, or endOfMibView (which keeps the OID).</summary>
+    private Variable Next(ObjectIdentifier oid)
+    {
+        var next = _table
+            .Select(kv => (Id: new ObjectIdentifier(kv.Key), kv.Value))
+            .Where(x => x.Id.CompareTo(oid) > 0)
+            .OrderBy(x => x.Id)
+            .FirstOrDefault();
+        return next.Id is null ? new Variable(oid, new EndOfMibView()) : new Variable(next.Id, next.Value);
+    }
 
     public void Dispose()
     {

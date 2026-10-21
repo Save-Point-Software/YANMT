@@ -124,6 +124,20 @@ public class ReadOnlyScanTests
     }
 
     [Fact]
+    public void Snmp_collector_builds_only_read_request_messages()
+    {
+        // Any SharpSnmpLib message or PDU constructed for sending must be a read request. Responses and
+        // reports appear only as parsed replies (and the reader's synthetic discovery stand-in).
+        var built = SourceScanner.Files("Yanmt.Infrastructure/Collectors/Snmp", "*.cs")
+            .SelectMany(f => Regex.Matches(SourceScanner.Split(File.ReadAllText(f)).Code, @"\bnew\s+(\w*Request\w*)\s*\(")
+                .Select(m => m.Groups[1].Value))
+            .Distinct()
+            .ToList();
+        Assert.NotEmpty(built);
+        Assert.All(built, type => Assert.Contains(type, new[] { "GetRequestMessage", "GetNextRequestMessage", "GetBulkRequestMessage" }));
+    }
+
+    [Fact]
     public void Snmp_reader_interface_has_no_write_operations()
     {
         var methods = typeof(ISnmpReader).GetMethods(BindingFlags.Public | BindingFlags.Instance).Select(m => m.Name).ToList();

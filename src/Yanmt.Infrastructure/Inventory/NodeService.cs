@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Yanmt.Core.Credentials;
@@ -95,6 +96,10 @@ public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, Tim
                 SshEnabled = n.SshEnabled,
                 SnmpProfileId = n.SnmpProfileId,
                 SshProfileId = n.SshProfileId,
+                CpuWarningPercent = n.CpuWarningPercent,
+                CpuCriticalPercent = n.CpuCriticalPercent,
+                MemoryWarningPercent = n.MemoryWarningPercent,
+                MemoryCriticalPercent = n.MemoryCriticalPercent,
                 SshHostKey = n.SshHostKeyFingerprint is null ? null : $"{n.SshHostKeyAlgorithm} {n.SshHostKeyFingerprint}",
             };
     }
@@ -220,6 +225,14 @@ public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, Tim
 
     private async Task<SaveResult> SaveAsync(int? id, NodeEditModel model, CancellationToken cancellationToken)
     {
+        // Re-validate on the server: the form's validation is a convenience, not the boundary.
+        var errors = new List<ValidationResult>();
+        if (!Validator.TryValidateObject(model, new ValidationContext(model), errors, validateAllProperties: true))
+        {
+            var first = errors[0];
+            return SaveResult.Fail(first.MemberNames.FirstOrDefault(), first.ErrorMessage ?? "Invalid node.");
+        }
+
         if (!NodeRules.TryNormalizeIp(model.ManagementIp, out var ip))
         {
             return SaveResult.Fail(nameof(model.ManagementIp), NodeRules.ValidateManagementIp(model.ManagementIp)!);
@@ -270,6 +283,10 @@ public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, Tim
         node.SshEnabled = model.SshEnabled;
         node.SnmpProfileId = model.SnmpProfileId;
         node.SshProfileId = model.SshProfileId;
+        node.CpuWarningPercent = model.CpuWarningPercent;
+        node.CpuCriticalPercent = model.CpuCriticalPercent;
+        node.MemoryWarningPercent = model.MemoryWarningPercent;
+        node.MemoryCriticalPercent = model.MemoryCriticalPercent;
         node.UpdatedUtc = now;
 
         var tagCache = await db.Tags.ToDictionaryAsync(t => t.Name, StringComparer.OrdinalIgnoreCase, cancellationToken);

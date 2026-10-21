@@ -18,6 +18,8 @@ public class YanmtDbContext(DbContextOptions<YanmtDbContext> options) : DbContex
     public DbSet<Setting> Settings => Set<Setting>();
     public DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
     public DbSet<IcmpSample> IcmpSamples => Set<IcmpSample>();
+    public DbSet<MetricSample> MetricSamples => Set<MetricSample>();
+    public DbSet<NodeSystemInfo> NodeSystemInfo => Set<NodeSystemInfo>();
     public DbSet<Map> Maps => Set<Map>();
     public DbSet<MapElement> MapElements => Set<MapElement>();
     public DbSet<MapLink> MapLinks => Set<MapLink>();
@@ -92,6 +94,25 @@ public class YanmtDbContext(DbContextOptions<YanmtDbContext> options) : DbContex
 
             // Events outlive the node they describe; the message carries the hostname.
             e.HasOne(x => x.Node).WithMany().HasForeignKey(x => x.NodeId).OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<MetricSample>(e =>
+        {
+            e.HasIndex(x => new { x.StatusSourceId, x.TimestampUtc });
+            e.HasOne(x => x.StatusSource).WithMany().HasForeignKey(x => x.StatusSourceId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<NodeSystemInfo>(e =>
+        {
+            e.HasKey(x => x.NodeId);
+            e.HasOne(x => x.Node).WithOne().HasForeignKey<NodeSystemInfo>(x => x.NodeId).OnDelete(DeleteBehavior.Cascade);
+            e.Property(x => x.SysDescr).HasMaxLength(1024);
+            e.Property(x => x.SysObjectId).HasMaxLength(256);
+            e.Property(x => x.SysName).HasMaxLength(255);
+            e.Property(x => x.SysLocation).HasMaxLength(255);
+            e.Property(x => x.SysContact).HasMaxLength(255);
+            e.Property(x => x.EngineId).HasMaxLength(64);
+            e.Property(x => x.MemoryPool).HasMaxLength(64);
         });
 
         modelBuilder.Entity<IcmpSample>(e =>

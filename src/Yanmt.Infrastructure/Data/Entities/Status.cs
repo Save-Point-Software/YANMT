@@ -52,6 +52,16 @@ public class IcmpSample
     public double LossPercent { get; set; }
 }
 
+/// <summary>One numeric sample of a status source (CPU %, memory %, later custom monitors).</summary>
+public class MetricSample
+{
+    public long Id { get; set; }
+    public long StatusSourceId { get; set; }
+    public StatusSource StatusSource { get; set; } = null!;
+    public DateTime TimestampUtc { get; set; }
+    public double Value { get; set; }
+}
+
 /// <summary>A state change from any source. Acknowledgement and the event UI arrive in Phase 6.</summary>
 public class Event
 {

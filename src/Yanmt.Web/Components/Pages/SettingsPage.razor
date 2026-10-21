@@ -96,7 +96,61 @@
         }
     </section>
 
-    <p class="muted">SNMP intervals, CPU/memory thresholds and retention settings are added here in later phases.</p>
+    <section class="card">
+        <h2>SNMP default stats</h2>
+        <p class="muted">
+            Polled on every enabled node with SNMP on and an SNMPv3 profile: system info, uptime (reboots show Warning
+            until the next poll), CPU (cpmCPUTotal5minRev) and memory (the Processor pool). CPU and memory thresholds
+            can be overridden per node on the node's edit page.
+        </p>
+        <div class="field-row">
+            <div class="field narrow-field">
+                <label for="snmp-interval">Interval (s)</label>
+                <input id="snmp-interval" type="number" @bind="_snmp.IntervalSeconds" disabled="@(!_isAdmin)" />
+            </div>
+            <div class="field narrow-field">
+                <label for="snmp-timeout">Timeout per request (ms)</label>
+                <input id="snmp-timeout" type="number" @bind="_snmp.TimeoutMs" disabled="@(!_isAdmin)" />
+            </div>
+        </div>
+        <div class="field-row">
+            <div class="field narrow-field">
+                <label for="cpu-warn">CPU Warning (%)</label>
+                <input id="cpu-warn" type="number" step="any" @bind="_snmp.CpuWarningPercent" disabled="@(!_isAdmin)" />
+            </div>
+            <div class="field narrow-field">
+                <label for="cpu-crit">CPU Critical (%)</label>
+                <input id="cpu-crit" type="number" step="any" @bind="_snmp.CpuCriticalPercent" disabled="@(!_isAdmin)" />
+            </div>
+            <div class="field narrow-field">
+                <label for="mem-warn">Memory Warning (%)</label>
+                <input id="mem-warn" type="number" step="any" @bind="_snmp.MemoryWarningPercent" disabled="@(!_isAdmin)" />
+            </div>
+            <div class="field narrow-field">
+                <label for="mem-crit">Memory Critical (%)</label>
+                <input id="mem-crit" type="number" step="any" @bind="_snmp.MemoryCriticalPercent" disabled="@(!_isAdmin)" />
+            </div>
+        </div>
+
+        @foreach (var (_, error) in _snmpErrors)
+        {
+            <p class="error">@error</p>
+        }
+
+        @if (_isAdmin)
+        {
+            <div class="form-actions">
+                <button class="btn primary" @onclick="SaveSnmpAsync">Save SNMP settings</button>
+                <button class="btn" @onclick="() => { _snmp = new SnmpForm(new SnmpSettings()); _snmpSaved = false; }">Reset to defaults</button>
+                @if (_snmpSaved)
+                {
+                    <span class="success">Saved. Pollers pick it up within a few seconds.</span>
+                }
+            </div>
+        }
+    </section>
+
+    <p class="muted">Retention settings are added here in Phase 6.</p>
 </div>
 
 @code {
@@ -119,6 +173,46 @@
         _isAdmin = state.User.IsInRole(YanmtRoles.Admin);
         Load(await Settings.GetAsync(SettingKeys.StatusColors));
         _icmp = new IcmpForm(await Settings.GetAsync(SettingKeys.Icmp));
+        _snmp = new SnmpForm(await Settings.GetAsync(SettingKeys.Snmp));
+    }
+
+    private SnmpForm _snmp = new(new SnmpSettings());
+    private IReadOnlyList<(string Field, string Error)> _snmpErrors = [];
+    private bool _snmpSaved;
+
+    private async Task SaveSnmpAsync()
+    {
+        _snmpSaved = false;
+        var settings = _snmp.ToSettings();
+        _snmpErrors = settings.Validate();
+        if (!_isAdmin || _snmpErrors.Count > 0)
+        {
+            return;
+        }
+
+        await Settings.SetAsync(SettingKeys.Snmp, settings);
+        _snmpSaved = true;
+    }
+
+    /// <summary>Mutable copy for binding; SnmpSettings itself is immutable.</summary>
+    private sealed class SnmpForm(SnmpSettings s)
+    {
+        public int IntervalSeconds { get; set; } = s.IntervalSeconds;
+        public int TimeoutMs { get; set; } = s.TimeoutMs;
+        public double CpuWarningPercent { get; set; } = s.CpuWarningPercent;
+        public double CpuCriticalPercent { get; set; } = s.CpuCriticalPercent;
+        public double MemoryWarningPercent { get; set; } = s.MemoryWarningPercent;
+        public double MemoryCriticalPercent { get; set; } = s.MemoryCriticalPercent;
+
+        public SnmpSettings ToSettings() => new()
+        {
+            IntervalSeconds = IntervalSeconds,
+            TimeoutMs = TimeoutMs,
+            CpuWarningPercent = CpuWarningPercent,
+            CpuCriticalPercent = CpuCriticalPercent,
+            MemoryWarningPercent = MemoryWarningPercent,
+            MemoryCriticalPercent = MemoryCriticalPercent,
+        };
     }
 
     private IcmpForm _icmp = new(new IcmpSettings());

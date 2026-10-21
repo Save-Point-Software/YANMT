@@ -1,0 +1,117 @@
+@using Yanmt.Core.Monitoring
+@using Yanmt.Infrastructure.Data.Entities
+@using Yanmt.Infrastructure.Monitoring
+@inject NodeDetailService Detail
+
+<section class="card">
+    <h2>Status sources</h2>
+    @if (Live is null || Live.Sources.Count == 0)
+    {
+        <p class="muted">
+            @(!Node.Enabled ? "The node is disabled, so nothing is polled."
+              : !Node.IcmpEnabled && !Node.SnmpEnabled ? "Nothing is polled for this node: ICMP and SNMP are both off."
+              : "No results yet. The first polls run within a minute of enabling.")
+        </p>
+    }
+    else
+    {
+        <table class="grid">
+            <thead><tr><th class="col-state"></th><th>Source</th><th>Value</th><th>Since (UTC)</th></tr></thead>
+            <tbody>
+                @foreach (var s in Live.Sources)
+                {
+                    <tr>
+                        <td class="col-state"><StateDot State="s.State" Colors="Colors" /></td>
+                        <td>@SourceName(s.Type) @s.Key</td>
+                        <td class="mono">@s.ValueText</td>
+                        <td class="mono nowrap">@s.SinceUtc.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</section>
+
+<div class="chart-toolbar">
+    <span class="muted">Range</span>
+    @foreach (var (range, label) in Ranges)
+    {
+        <button class="btn @(_range == range ? "primary" : null)" @onclick="() => SetRangeAsync(range)">@label</button>
+    }
+    <span class="muted">Times in UTC.</span>
+</div>
+
+@if (_charts is { } c)
+{
+    <div class="chart-grid">
+        @if (Node.IcmpEnabled || c.Latency.Count > 0 || c.Loss.Count > 0)
+        {
+            <LineChart Title="ICMP latency" Unit="ms" From="c.FromUtc" To="c.ToUtc" GapAfter="Gap(_icmpInterval)"
+                       Series='@One("average", c.Latency, "s-latency", band: true)' />
+            <LineChart Title="ICMP packet loss" Unit="%" YMax="100" From="c.FromUtc" To="c.ToUtc" GapAfter="Gap(_icmpInterval)"
+                       Series='@One("worst", c.Loss, "s-loss", useMax: true)' />
+        }
+        @if (Node.SnmpEnabled || c.Cpu.Count > 0 || c.Memory.Count > 0)
+        {
+            <LineChart Title="CPU (5-minute average)" Unit="%" YMax="100" From="c.FromUtc" To="c.ToUtc" GapAfter="Gap(_snmpInterval)"
+                       Series='@One("CPU", c.Cpu, "s-cpu", band: true)' Lines="ThresholdLines(_cpu)" />
+            <LineChart Title="Memory used" Unit="%" YMax="100" From="c.FromUtc" To="c.ToUtc" GapAfter="Gap(_snmpInterval)"
+                       Series='@One("memory", c.Memory, "s-memory", band: true)' Lines="ThresholdLines(_memory)" />
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public int NodeId { get; set; }
+    [Parameter, EditorRequired] public NodeListItem Node { get; set; } = null!;
+    [Parameter] public NodeStatus? Live { get; set; }
+    [Parameter] public StatusColors Colors { get; set; } = StatusColors.Default;
+
+    /// <summary>Changes when the page gets a live update for this node: charts reload.</summary>
+    [Parameter] public int Version { get; set; }
+
+    private static readonly (ChartRange Range, string Label)[] Ranges =
+        [(ChartRange.Hour, "1 h"), (ChartRange.SixHours, "6 h"), (ChartRange.Day, "24 h"), (ChartRange.Week, "7 d")];
+
+    private ChartRange _range = ChartRange.SixHours;
+    private NodeCharts? _charts;
+    private Thresholds _cpu;
+    private Thresholds _memory;
+    private int _snmpInterval = 300;
+    private int _icmpInterval = 60;
+    private (int NodeId, int Version)? _loaded;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loaded != (NodeId, Version))
+        {
+            _loaded = (NodeId, Version);
+            (_cpu, _memory, _snmpInterval, _icmpInterval) = await Detail.GetPollingAsync(NodeId);
+            _charts = await Detail.GetChartsAsync(NodeId, _range);
+        }
+    }
+
+    private async Task SetRangeAsync(ChartRange range)
+    {
+        _range = range;
+        _charts = await Detail.GetChartsAsync(NodeId, _range);
+    }
+
+    private static IReadOnlyList<LineChart.ChartSeries> One(string label, IReadOnlyList<Yanmt.Core.Charts.Bucket> points, string css, bool band = false, bool useMax = false) =>
+        [new(label, points, css, band, useMax)];
+
+    /// <summary>Missed polls show as gaps: more than 2.5 intervals between points breaks the line.</summary>
+    private static TimeSpan Gap(int intervalSeconds) => TimeSpan.FromSeconds(intervalSeconds * 2.5);
+
+    private static IReadOnlyList<LineChart.ChartLine> ThresholdLines(Thresholds t) =>
+        [new(t.Warning, "t-warning", $"Warning at {t.Warning:0.#}%"), new(t.Critical, "t-critical", $"Critical at {t.Critical:0.#}%")];
+
+    internal static string SourceName(StatusSourceType type) => type switch
+    {
+        StatusSourceType.Icmp => "ICMP",
+        StatusSourceType.Cpu => "CPU",
+        StatusSourceType.Memory => "Memory",
+        StatusSourceType.Uptime => "Uptime (SNMP)",
+        _ => type.ToString(),
+    };
+}

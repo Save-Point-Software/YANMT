@@ -1,0 +1,135 @@
+@using Yanmt.Core.Monitoring
+@using Yanmt.Infrastructure.Monitoring
+@implements IDisposable
+@inject InterfaceService Interfaces
+
+@* Live IF-MIB walk on demand (never polled continuously), with rates from two counter samples. *@
+<section class="card">
+    <div class="page-header">
+        <h2>Interfaces</h2>
+        <div class="actions inline">
+            @if (_table is { Rows.Count: > 0 })
+            {
+                <input type="search" class="filter" placeholder="Filter by name, description or alias" @bind="_filter" @bind:event="oninput" aria-label="Filter interfaces" />
+                <label class="inline"><input type="checkbox" @bind="_upOnly" /> up only</label>
+            }
+            <button class="btn" @onclick="ReadAsync" disabled="@(_busy || !SnmpReady)">@(_table is null ? "Read interfaces" : "Read again")</button>
+        </div>
+    </div>
+
+    @if (!SnmpReady)
+    {
+        <p class="muted">SNMP must be enabled for this node, with an SNMPv3 profile assigned, to read its interfaces.</p>
+    }
+    else if (_busy)
+    {
+        <p class="muted">@_progress</p>
+    }
+    else if (_table?.Error is { } error)
+    {
+        <p class="error">@error</p>
+    }
+    else if (_table is { } t)
+    {
+        <p class="muted">
+            @t.Rows.Count interfaces. Rates are averages over the @t.SampleSeconds.ToString("0.#") s between two samples.
+            @if (t.Truncated)
+            {
+                <span class="error">Only the first @InterfaceService.MaxInterfaces were read.</span>
+            }
+        </p>
+        <div class="table-wrap">
+            <table class="grid interfaces">
+                <thead>
+                    <tr>
+                        <th>ifIndex</th><th>Name</th><th>Description</th><th>Alias</th><th>Admin</th><th>Oper</th>
+                        <th class="num">Speed</th><th class="num">In</th><th class="num">Out</th><th class="num">In %</th><th class="num">Out %</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in Filtered)
+                    {
+                        <tr class="@(r.AdminStatus == 2 ? "disabled" : null)" @key="r.Index">
+                            <td class="mono">@r.Index</td>
+                            <td class="mono">@r.Name</td>
+                            <td>@r.Description</td>
+                            <td>@r.Alias</td>
+                            <td>@InterfaceRow.Status(r.AdminStatus)</td>
+                            <td class="@(r.OperStatus == 1 ? "ok-text" : r.AdminStatus == 1 ? "error" : null)">@InterfaceRow.Status(r.OperStatus)</td>
+                            <td class="num">@(r.SpeedMbps is { } s ? Units.SpeedMbps(s) : "")</td>
+                            <td class="num">@(r.InBps is { } i ? Units.BitsPerSecond(i) : "")</td>
+                            <td class="num">@(r.OutBps is { } o ? Units.BitsPerSecond(o) : "")</td>
+                            <td class="num">@Pct(r.InUtilization)</td>
+                            <td class="num">@Pct(r.OutUtilization)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <p class="muted">"Monitor this" (turning an interface into a custom monitor) arrives with custom monitors in Phase 4.</p>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public int NodeId { get; set; }
+    [Parameter] public bool SnmpReady { get; set; }
+
+    private readonly CancellationTokenSource _cts = new();
+    private InterfaceTable? _table;
+    private bool _busy;
+    private string _progress = "";
+    private string _filter = "";
+    private bool _upOnly;
+    private bool _started;
+
+    private IEnumerable<InterfaceRow> Filtered => (_table?.Rows ?? [])
+        .Where(r => !_upOnly || r.OperStatus == 1)
+        .Where(r => string.IsNullOrWhiteSpace(_filter)
+                    || (r.Name?.Contains(_filter, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (r.Description?.Contains(_filter, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (r.Alias?.Contains(_filter, StringComparison.OrdinalIgnoreCase) ?? false));
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Read once when the tab is first opened (after render, so prerendering never touches the device).
+        if (firstRender && SnmpReady && !_started)
+        {
+            _started = true;
+            await ReadAsync();
+        }
+    }
+
+    private async Task ReadAsync()
+    {
+        _busy = true;
+        _progress = "Starting…";
+        StateHasChanged();
+        var progress = new Progress<string>(text =>
+        {
+            _progress = text;
+            _ = InvokeAsync(StateHasChanged);
+        });
+        try
+        {
+            _table = await Interfaces.ReadAsync(NodeId, InterfaceService.DefaultSampleGap, progress, _cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            return; // left the tab
+        }
+        finally
+        {
+            _busy = false;
+        }
+
+        StateHasChanged();
+    }
+
+    private static string Pct(double? v) => v is { } x ? x.ToString(x < 10 ? "0.##" : "0.#", System.Globalization.CultureInfo.InvariantCulture) + "%" : "";
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}

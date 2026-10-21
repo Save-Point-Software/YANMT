@@ -1,0 +1,190 @@
+@using System.Globalization
+@using System.Text
+@using Yanmt.Core.Charts
+
+@* Hand-built SVG time-series chart (no chart library). Draws each series' bucket average as a line,
+   optionally its min..max as a band, breaks the line across gaps, and shows threshold lines. *@
+<figure class="chart">
+    <figcaption>
+        <span class="chart-title">@Title</span>
+        @foreach (var s in Series)
+        {
+            <span class="chart-key @s.CssClass">@s.Label</span>
+        }
+        @if (Latest is { } latest)
+        {
+            <span class="chart-latest">now @Format(latest)</span>
+        }
+    </figcaption>
+    <svg viewBox="0 0 @W @H" class="chart-svg" role="img" aria-label="@Title">
+        @for (var i = 0; i <= YTicks; i++)
+        {
+            var v = _yMax * i / YTicks;
+            var y = Y(v);
+            <line class="chart-gridline" x1="@L" x2="@(W - R)" y1="@F(y)" y2="@F(y)" />
+            <g><text class="chart-axis" x="@(L - 4)" y="@F(y + 3)" text-anchor="end">@Format(v)</text></g>
+        }
+        @for (var i = 0; i <= XTicks; i++)
+        {
+            var t = From + (To - From) * i / XTicks;
+            var x = X(t);
+            <line class="chart-gridline" x1="@F(x)" x2="@F(x)" y1="@T" y2="@(H - B)" />
+            <g><text class="chart-axis" x="@F(x)" y="@(H - 6)" text-anchor="@(i == 0 ? "start" : i == XTicks ? "end" : "middle")">@TimeLabel(t)</text></g>
+        }
+        @foreach (var line in Lines)
+        {
+            @if (line.Value <= _yMax)
+            {
+                <line class="chart-threshold @line.CssClass" x1="@L" x2="@(W - R)" y1="@F(Y(line.Value))" y2="@F(Y(line.Value))"><title>@line.Label</title></line>
+            }
+        }
+        @foreach (var s in Series)
+        {
+            @foreach (var segment in Segments(s.Points))
+            {
+                @if (s.Band && segment.Count > 1)
+                {
+                    <polygon class="chart-band @s.CssClass" points="@BandPoints(segment)" />
+                }
+                @if (segment.Count == 1)
+                {
+                    <circle class="chart-dot @s.CssClass" cx="@F(X(segment[0].Time))" cy="@F(Y(s.Value(segment[0])))" r="2" />
+                }
+                else
+                {
+                    <polyline class="chart-line @s.CssClass" points="@LinePoints(segment, s)" />
+                }
+            }
+            @foreach (var p in s.Points)
+            {
+                <circle class="chart-hit" cx="@F(X(p.Time))" cy="@F(Y(s.Value(p)))" r="5">
+                    <title>@($"{p.Time:yyyy-MM-dd HH:mm} UTC  {s.Label} {Format(s.Value(p))}" + (s.Band && p.Count > 1 ? $" (min {Format(p.Min)}, max {Format(p.Max)})" : ""))</title>
+                </circle>
+            }
+        }
+        @if (Series.All(s => s.Points.Count == 0))
+        {
+            <g><text class="chart-empty" x="@(W / 2)" y="@(H / 2)" text-anchor="middle">No data in this range</text></g>
+        }
+    </svg>
+</figure>
+
+@code {
+    private const int W = 640, H = 170, L = 46, R = 10, T = 8, B = 20, YTicks = 4, XTicks = 6;
+
+    /// <summary>One series. Value picks what the line shows from each bucket (average by default).</summary>
+    public sealed record ChartSeries(string Label, IReadOnlyList<Bucket> Points, string CssClass, bool Band = false, bool UseMax = false)
+    {
+        public double Value(Bucket b) => UseMax ? b.Max : b.Avg;
+    }
+
+    public sealed record ChartLine(double Value, string CssClass, string Label);
+
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    [Parameter, EditorRequired] public IReadOnlyList<ChartSeries> Series { get; set; } = [];
+    [Parameter, EditorRequired] public DateTime From { get; set; }
+    [Parameter, EditorRequired] public DateTime To { get; set; }
+    [Parameter] public string Unit { get; set; } = "";
+    [Parameter] public double? YMax { get; set; }
+    [Parameter] public IReadOnlyList<ChartLine> Lines { get; set; } = [];
+
+    /// <summary>Points further apart than this are not joined (missed polls show as a gap).</summary>
+    [Parameter] public TimeSpan GapAfter { get; set; } = TimeSpan.FromMinutes(3);
+
+    /// <summary>How many buckets the series were downsampled into (one bucket is never a gap).</summary>
+    [Parameter] public int Buckets { get; set; } = 300;
+
+    private double _yMax = 1;
+
+    private double? Latest => Series.FirstOrDefault(s => s.Points.Count > 0) is { } s ? s.Value(s.Points[^1]) : null;
+
+    protected override void OnParametersSet()
+    {
+        var peak = Series.SelectMany(s => s.Points.Select(p => s.Band ? p.Max : s.Value(p))).DefaultIfEmpty(0).Max();
+        _yMax = YMax ?? Nice(Math.Max(peak * 1.1, Lines.Select(l => l.Value).DefaultIfEmpty(0).Max() * 1.05));
+    }
+
+    /// <summary>The next "nice" axis maximum (1, 2, 2.5, 5 x 10^n) at or above the value.</summary>
+    private static double Nice(double v)
+    {
+        if (v <= 0 || !double.IsFinite(v))
+        {
+            return 1;
+        }
+
+        var magnitude = Math.Pow(10, Math.Floor(Math.Log10(v)));
+        foreach (var step in new[] { 1, 2, 2.5, 5, 10 })
+        {
+            if (step * magnitude >= v)
+            {
+                return step * magnitude;
+            }
+        }
+
+        return 10 * magnitude;
+    }
+
+    private double X(DateTime t) => L + (W - L - R) * Math.Clamp((t - From).TotalSeconds / Math.Max(1, (To - From).TotalSeconds), 0, 1);
+
+    private double Y(double v) => H - B - (H - B - T) * Math.Clamp(v / _yMax, 0, 1);
+
+    private IEnumerable<List<Bucket>> Segments(IReadOnlyList<Bucket> points)
+    {
+        var bucketWidth = (To - From) / Math.Max(1, Buckets);
+        var gap = GapAfter > bucketWidth * 2 ? GapAfter : bucketWidth * 2;
+        var current = new List<Bucket>();
+        foreach (var p in points)
+        {
+            if (current.Count > 0 && p.Time - current[^1].Time > gap)
+            {
+                yield return current;
+                current = [];
+            }
+
+            current.Add(p);
+        }
+
+        if (current.Count > 0)
+        {
+            yield return current;
+        }
+    }
+
+    private string LinePoints(List<Bucket> segment, ChartSeries s)
+    {
+        var sb = new StringBuilder();
+        foreach (var p in segment)
+        {
+            sb.Append(F(X(p.Time))).Append(',').Append(F(Y(s.Value(p)))).Append(' ');
+        }
+
+        return sb.ToString();
+    }
+
+    private string BandPoints(List<Bucket> segment)
+    {
+        var sb = new StringBuilder();
+        foreach (var p in segment)
+        {
+            sb.Append(F(X(p.Time))).Append(',').Append(F(Y(p.Max))).Append(' ');
+        }
+
+        for (var i = segment.Count - 1; i >= 0; i--)
+        {
+            sb.Append(F(X(segment[i].Time))).Append(',').Append(F(Y(segment[i].Min))).Append(' ');
+        }
+
+        return sb.ToString();
+    }
+
+    private string TimeLabel(DateTime t) => (To - From).TotalDays > 1.5
+        ? t.ToString("MM-dd HH:mm", CultureInfo.InvariantCulture)
+        : t.ToString("HH:mm", CultureInfo.InvariantCulture);
+
+    private string Format(double v) =>
+        (Math.Abs(v) >= 100 || v == 0 ? v.ToString("0", CultureInfo.InvariantCulture)
+            : Math.Abs(v) >= 10 ? v.ToString("0.#", CultureInfo.InvariantCulture)
+            : v.ToString("0.##", CultureInfo.InvariantCulture)) + (Unit is "" or "%" ? Unit : " " + Unit);
+
+    private static string F(double v) => v.ToString("0.#", CultureInfo.InvariantCulture);
+}

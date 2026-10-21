@@ -604,6 +604,9 @@
     private static string LabelName(StatusSourceType type, string key) => type switch
     {
         StatusSourceType.Icmp => "ICMP latency",
+        StatusSourceType.Cpu => "CPU (5 min)",
+        StatusSourceType.Memory => "Memory used",
+        StatusSourceType.Uptime => "Uptime",
         _ when key.Length > 0 => $"{type} ({key})",
         _ => type.ToString(),
     };

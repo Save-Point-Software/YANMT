@@ -243,4 +243,26 @@ public class NodeServiceTests
         Assert.Contains("no credential profile named 'nope'", preview.Rows[0].Messages[0]);
         Assert.Contains("is an Ssh profile", preview.Rows[1].Messages[0]);
     }
+
+    [Fact]
+    public async Task Per_node_thresholds_are_saved_and_validated()
+    {
+        await using var test = await TestDatabase.CreateAsync();
+        var svc = new NodeService(test.Factory, test.Clock);
+        var model = Model();
+        model.CpuWarningPercent = 70;
+        model.MemoryCriticalPercent = 97;
+        var id = (await svc.CreateAsync(model, Ct)).Id!.Value;
+
+        var loaded = await svc.GetForEditAsync(id, Ct);
+        Assert.Equal((70.0, null, null, 97.0), (loaded!.CpuWarningPercent, loaded.CpuCriticalPercent, loaded.MemoryWarningPercent, loaded.MemoryCriticalPercent));
+
+        loaded.CpuCriticalPercent = 60; // below its own Warning
+        var bad = await svc.UpdateAsync(id, loaded, Ct);
+        Assert.False(bad.Ok);
+        Assert.Contains("CPU Warning must be below Critical", bad.Error);
+
+        loaded.CpuCriticalPercent = 150;
+        Assert.Contains("between 1 and 100", (await svc.UpdateAsync(id, loaded, Ct)).Error);
+    }
 }

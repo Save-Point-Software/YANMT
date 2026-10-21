@@ -7,6 +7,7 @@ using Yanmt.Core.Credentials;
 using Yanmt.Infrastructure.Data;
 using Yanmt.Infrastructure.Data.Entities;
 using Yanmt.Infrastructure.Inventory;
+using Yanmt.Infrastructure.Monitoring;
 using Yanmt.Infrastructure.Security;
 
 namespace Yanmt.Infrastructure.Credentials;
@@ -16,7 +17,7 @@ namespace Yanmt.Infrastructure.Credentials;
 /// only the collectors' callers in this assembly can decrypt (<see cref="LoadSshAsync"/>,
 /// <see cref="LoadSnmpAsync"/>). Saves are audited, with the secret blob shown as "***".
 /// </summary>
-public sealed class CredentialService(IDbContextFactory<YanmtDbContext> dbFactory, SecretProtector protector, TimeProvider clock)
+public sealed class CredentialService(IDbContextFactory<YanmtDbContext> dbFactory, SecretProtector protector, TimeProvider clock, InventoryChangeSignal? signal = null)
 {
     public async Task<List<CredentialListItem>> ListAsync(CancellationToken cancellationToken = default)
     {
@@ -194,6 +195,7 @@ public sealed class CredentialService(IDbContextFactory<YanmtDbContext> dbFactor
             return SaveResult.Fail(nameof(model.Name), $"A profile named '{name}' already exists.");
         }
 
+        signal?.Notify(); // pollers hold decrypted credentials; make them reload
         return SaveResult.Success(profile.Id);
 
         static string? Pick(string? entered, string? kept) => string.IsNullOrEmpty(entered) ? kept : entered;

@@ -1,0 +1,108 @@
+@using Yanmt.Core.Oids
+@using Yanmt.Infrastructure.Monitoring
+@implements IDisposable
+@inject SnmpQueryService Query
+@inject IOidNameResolver Names
+
+@* Read-only SNMP query tool (GET / GETNEXT / WALK). There is no SET anywhere in YANMT. *@
+<section class="card">
+    <h2>SNMP query</h2>
+    @if (!SnmpReady)
+    {
+        <p class="muted">SNMP must be enabled for this node, with an SNMPv3 profile assigned, to query it.</p>
+    }
+    else
+    {
+        <form class="query-form" @onsubmit="RunAsync" @onsubmit:preventDefault>
+            <select @bind="_operation" aria-label="Operation">
+                <option value="@SnmpQueryOperation.Get">GET</option>
+                <option value="@SnmpQueryOperation.GetNext">GETNEXT</option>
+                <option value="@SnmpQueryOperation.Walk">WALK</option>
+            </select>
+            <input class="mono" @bind="_oid" list="oid-names" placeholder="OID or name, e.g. sysUpTime.0, ifXTable, 1.3.6.1.2.1.15.3.1.2" aria-label="OID" />
+            <datalist id="oid-names">
+                @foreach (var n in Names.All)
+                {
+                    <option value="@n.Name">@n.Module @n.Oid</option>
+                }
+            </datalist>
+            <button type="submit" class="btn primary" disabled="@(_busy || string.IsNullOrWhiteSpace(_oid))">@(_busy ? "Running…" : "Run")</button>
+        </form>
+        <div class="hint">
+            Numeric OIDs or names from the built-in table (SNMPv2-MIB, IF-MIB, BGP4-MIB, Cisco CPU and memory MIBs), with an
+            instance if needed (<code>ifDescr.1</code>). WALK stops after @SnmpQueryService.MaxWalkRows rows. Read-only: there is no SET.
+        </div>
+
+        @if (_result is { } r)
+        {
+            @if (r.Error is not null)
+            {
+                <p class="error">@r.Error</p>
+            }
+            else
+            {
+                <p class="muted">
+                    @r.Rows.Count row(s) for <span class="mono">@r.ResolvedOid</span> in @r.Elapsed.TotalSeconds.ToString("0.##") s.
+                    @if (r.Truncated)
+                    {
+                        <span class="error">Stopped at @SnmpQueryService.MaxWalkRows rows; walk a narrower subtree for the rest.</span>
+                    }
+                </p>
+                @if (r.Rows.Count > 0)
+                {
+                    <div class="table-wrap">
+                        <table class="grid">
+                            <thead><tr><th>OID</th><th>Name</th><th>Type</th><th>Value</th></tr></thead>
+                            <tbody>
+                                @foreach (var row in r.Rows)
+                                {
+                                    <tr>
+                                        <td class="mono nowrap">@row.Oid</td>
+                                        <td class="mono nowrap">@row.Name</td>
+                                        <td class="nowrap">@row.Type</td>
+                                        <td class="mono wrap">@row.Value</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+                <p class="muted">Turning a result into a custom monitor arrives in Phase 4.</p>
+            }
+        }
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public int NodeId { get; set; }
+    [Parameter] public bool SnmpReady { get; set; }
+
+    private readonly CancellationTokenSource _cts = new();
+    private SnmpQueryOperation _operation = SnmpQueryOperation.Get;
+    private string _oid = "sysDescr.0";
+    private SnmpQueryResult? _result;
+    private bool _busy;
+
+    private async Task RunAsync()
+    {
+        _busy = true;
+        try
+        {
+            _result = await Query.QueryAsync(NodeId, _operation, _oid, _cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // left the tab
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}

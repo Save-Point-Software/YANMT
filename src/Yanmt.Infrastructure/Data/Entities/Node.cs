@@ -28,10 +28,45 @@ public class Node : IAudited
     /// <summary>"SHA256:…" fingerprint of the pinned host key. Connections presenting another key are refused.</summary>
     public string? SshHostKeyFingerprint { get; set; }
 
+    /// <summary>Per-node CPU/memory thresholds (percent). Null uses the global SNMP setting.</summary>
+    public double? CpuWarningPercent { get; set; }
+
+    public double? CpuCriticalPercent { get; set; }
+    public double? MemoryWarningPercent { get; set; }
+    public double? MemoryCriticalPercent { get; set; }
+
     public DateTime CreatedUtc { get; set; }
     public DateTime UpdatedUtc { get; set; }
 
     public List<NodeTag> Tags { get; set; } = [];
+}
+
+/// <summary>
+/// What the last SNMP poll learned about a node: system group, uptime baseline, engine. Written by
+/// the status engine on every poll, so it is deliberately not audited and lives apart from Node.
+/// </summary>
+public class NodeSystemInfo
+{
+    public int NodeId { get; set; }
+    public Node Node { get; set; } = null!;
+    public string? SysDescr { get; set; }
+    public string? SysObjectId { get; set; }
+    public string? SysName { get; set; }
+    public string? SysLocation { get; set; }
+    public string? SysContact { get; set; }
+
+    /// <summary>sysUpTime (TimeTicks) at <see cref="LastSuccessUtc"/>, the baseline for reboot detection.</summary>
+    public long? UptimeTicks { get; set; }
+
+    public string? EngineId { get; set; }
+    public int? EngineBoots { get; set; }
+
+    /// <summary>The memory pool the Memory source reports (normally "Processor").</summary>
+    public string? MemoryPool { get; set; }
+
+    public DateTime? LastPollUtc { get; set; }
+    public DateTime? LastSuccessUtc { get; set; }
+    public DateTime? LastRebootUtc { get; set; }
 }
 
 public class Tag

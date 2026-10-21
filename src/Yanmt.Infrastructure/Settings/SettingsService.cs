@@ -15,6 +15,7 @@ public static class SettingKeys
 {
     public static readonly SettingKey<StatusColors> StatusColors = new("status.colors", Core.Status.StatusColors.Default);
     public static readonly SettingKey<IcmpSettings> Icmp = new("polling.icmp", new IcmpSettings());
+    public static readonly SettingKey<SnmpSettings> Snmp = new("polling.snmp", new SnmpSettings());
 }
 
 /// <summary>

@@ -1,17 +1,18 @@
 @page "/nodes/{Id:int}/view"
+@using Yanmt.Core.Monitoring
 @using Yanmt.Infrastructure.Data.Entities
 @using Yanmt.Infrastructure.Monitoring
 @implements IDisposable
 @inject NodeService Nodes
+@inject NodeDetailService Detail
 @inject StatusCache Status
 @inject StatusBroadcaster Broadcaster
 @inject SettingsService Settings
-
-@* Minimal node page for Phase 2 (state, sources, recent events). The full drill-down arrives in Phase 3. *@
+@inject NavigationManager Nav
 
 <PageTitle>@(_node?.Hostname ?? "Node") - YANMT</PageTitle>
 
-<div class="page narrow">
+<div class="page">
     <p><a href="">← Map</a> · <a href="nodes">Nodes</a></p>
 
     @if (_notFound)
@@ -29,85 +30,147 @@
             </AuthorizeView>
         </div>
 
-        <dl class="details">
-            <dt>State</dt>
-            <dd>@(_node.Enabled ? state.ToString() : "Unknown (node disabled)")</dd>
-            <dt>Management IP</dt>
-            <dd class="mono">@_node.ManagementIp</dd>
-            @if (!string.IsNullOrEmpty(_node.Site))
+        <div class="node-header">
+            <dl class="details">
+                <dt>State</dt>
+                <dd>@(_node.Enabled ? state.ToString() : "Unknown (node disabled)")</dd>
+                <dt>Management IP</dt>
+                <dd class="mono">@_node.ManagementIp</dd>
+                @if (live?.Source(StatusSourceType.Uptime) is { } up)
+                {
+                    <dt>Uptime</dt>
+                    <dd>@up.ValueText @if (_system?.LastRebootUtc is { } reboot) { <span class="muted">(reboot seen @reboot.ToString("yyyy-MM-dd HH:mm") UTC)</span> }</dd>
+                }
+                @if (!string.IsNullOrEmpty(_node.Site))
+                {
+                    <dt>Site</dt>
+                    <dd>@_node.Site</dd>
+                }
+                @if (_node.Tags.Count > 0)
+                {
+                    <dt>Tags</dt>
+                    <dd>@foreach (var t in _node.Tags) { <span class="pill">@t</span> }</dd>
+                }
+            </dl>
+            @if (_system is not null)
             {
-                <dt>Site</dt>
-                <dd>@_node.Site</dd>
-            }
-            @if (_node.Tags.Count > 0)
-            {
-                <dt>Tags</dt>
-                <dd>@foreach (var t in _node.Tags) { <span class="pill">@t</span> }</dd>
-            }
-        </dl>
-
-        <section class="card">
-            <h2>Status sources</h2>
-            @if (live is null || live.Sources.Count == 0)
-            {
-                <p class="muted">
-                    @(!_node.Enabled ? "The node is disabled, so nothing is polled."
-                      : _node.IcmpEnabled ? "No results yet. The first ICMP poll runs within a minute of enabling."
-                      : "Nothing is polled for this node yet (ICMP is off; SNMP stats arrive in Phase 3).")
-                </p>
-            }
-            else
-            {
-                <table class="grid">
-                    <thead><tr><th class="col-state"></th><th>Source</th><th>Value</th><th>Since (UTC)</th></tr></thead>
-                    <tbody>
-                        @foreach (var s in live.Sources)
+                <dl class="details">
+                    @if (_system.SysName is { Length: > 0 })
+                    {
+                        <dt>sysName</dt>
+                        <dd>@_system.SysName</dd>
+                    }
+                    @if (_system.SysLocation is { Length: > 0 })
+                    {
+                        <dt>Location</dt>
+                        <dd>@_system.SysLocation</dd>
+                    }
+                    @if (_system.SysContact is { Length: > 0 })
+                    {
+                        <dt>Contact</dt>
+                        <dd>@_system.SysContact</dd>
+                    }
+                    <dt>Last SNMP poll</dt>
+                    <dd>
+                        @(_system.LastSuccessUtc?.ToString("yyyy-MM-dd HH:mm:ss") ?? "never") UTC
+                        @if (_system.LastPollUtc is { } lp && lp != _system.LastSuccessUtc)
                         {
-                            <tr>
-                                <td class="col-state"><StateDot State="s.State" Colors="_colors" /></td>
-                                <td>@(s.Type == StatusSourceType.Icmp ? "ICMP" : s.Type.ToString()) @s.Key</td>
-                                <td class="mono">@s.ValueText</td>
-                                <td class="mono nowrap">@s.SinceUtc.ToString("yyyy-MM-dd HH:mm:ss")</td>
-                            </tr>
+                            <span class="error">(last attempt @lp.ToString("HH:mm:ss") failed)</span>
                         }
-                    </tbody>
-                </table>
+                    </dd>
+                </dl>
             }
-        </section>
+        </div>
+        @if (_system?.SysDescr is { Length: > 0 } descr)
+        {
+            <details class="sysdescr">
+                <summary>@FirstLine(descr)</summary>
+                <pre class="output">@descr</pre>
+                @if (_system.SysObjectId is { Length: > 0 })
+                {
+                    <div class="muted mono">sysObjectID @_system.SysObjectId · engine @_system.EngineId · boots @_system.EngineBoots</div>
+                }
+            </details>
+        }
 
-        <section class="card">
-            <h2>Recent events</h2>
-            @if (_events.Count == 0)
+        <nav class="tabs" role="tablist">
+            @foreach (var (tab, label) in Tabs)
             {
-                <p class="muted">No state changes recorded.</p>
+                <a role="tab" class="@(CurrentTab == tab ? "active" : null)" aria-selected="@(CurrentTab == tab)" href="nodes/@Id/view?tab=@tab">@label</a>
             }
-            else
-            {
-                <table class="grid">
-                    <thead><tr><th>Time (UTC)</th><th class="col-state"></th><th>Event</th></tr></thead>
-                    <tbody>
-                        @foreach (var e in _events)
-                        {
-                            <tr>
-                                <td class="mono nowrap">@e.TimestampUtc.ToString("yyyy-MM-dd HH:mm:ss")</td>
-                                <td class="col-state"><StateDot State="e.NewState" Colors="_colors" /></td>
-                                <td>@e.Message</td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-            }
-        </section>
+        </nav>
+
+        @switch (CurrentTab)
+        {
+            case "interfaces":
+                <NodeInterfacesTab NodeId="Id" SnmpReady="SnmpReady" />
+                break;
+            case "query":
+                <NodeQueryTab NodeId="Id" SnmpReady="SnmpReady" />
+                break;
+            case "events":
+                <section class="card">
+                    <h2>Recent events</h2>
+                    @if (_events.Count == 0)
+                    {
+                        <p class="muted">No state changes recorded.</p>
+                    }
+                    else
+                    {
+                        <table class="grid">
+                            <thead><tr><th>Time (UTC)</th><th class="col-state"></th><th>Event</th></tr></thead>
+                            <tbody>
+                                @foreach (var e in _events)
+                                {
+                                    <tr>
+                                        <td class="mono nowrap">@e.TimestampUtc.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                        <td class="col-state"><StateDot State="e.NewState" Colors="_colors" /></td>
+                                        <td>@e.Message</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                    <p class="muted">The full event log (filters, acknowledgement, export) arrives in Phase 6.</p>
+                </section>
+                break;
+            case "backups":
+                <section class="card">
+                    <h2>Config backups</h2>
+                    <p class="muted">Scheduled <code>show running-config</code> backups with history and diffs arrive in Phase 5.</p>
+                </section>
+                break;
+            default:
+                <NodeOverviewTab NodeId="Id" Node="_node" Live="live" Colors="_colors" Version="_version" />
+                break;
+        }
     }
 </div>
 
 @code {
     [Parameter] public int Id { get; set; }
 
+    [SupplyParameterFromQuery(Name = "tab")] public string? Tab { get; set; }
+
+    private static readonly (string Tab, string Label)[] Tabs =
+    [
+        ("overview", "Overview"), ("interfaces", "Interfaces"), ("query", "SNMP query"), ("events", "Events"), ("backups", "Config backups"),
+    ];
+
     private NodeListItem? _node;
+    private NodeSystemView? _system;
     private List<NodeEventItem> _events = [];
     private StatusColors _colors = StatusColors.Default;
     private bool _notFound;
+
+    /// <summary>Bumped on each live update so the overview reloads its charts.</summary>
+    private int _version;
+
+    private string CurrentTab => Tabs.Any(t => t.Tab == Tab) ? Tab! : "overview";
+
+    private bool SnmpReady => _node is { Enabled: true, SnmpEnabled: true } && _hasSnmpProfile;
+
+    private bool _hasSnmpProfile;
 
     protected override async Task OnInitializedAsync()
     {
@@ -121,7 +184,14 @@
     {
         _node = await Nodes.GetAsync(Id);
         _notFound = _node is null;
-        _events = _node is null ? [] : await Nodes.RecentEventsAsync(Id, 20);
+        if (_node is null)
+        {
+            return;
+        }
+
+        _hasSnmpProfile = (await Nodes.GetForEditAsync(Id))?.SnmpProfileId is not null;
+        _system = await Detail.GetSystemAsync(Id);
+        _events = await Nodes.RecentEventsAsync(Id, 50);
     }
 
     private void OnStatusChanged(IReadOnlyCollection<int> ids)
@@ -130,10 +200,18 @@
         {
             _ = InvokeAsync(async () =>
             {
-                _events = await Nodes.RecentEventsAsync(Id, 20);
+                _system = await Detail.GetSystemAsync(Id);
+                _events = await Nodes.RecentEventsAsync(Id, 50);
+                _version++;
                 StateHasChanged();
             });
         }
+    }
+
+    private static string FirstLine(string s)
+    {
+        var line = s.Split('\n', 2)[0].Trim();
+        return line.Length > 160 ? line[..160] + "…" : line;
     }
 
     public void Dispose() => Broadcaster.Changed -= OnStatusChanged;

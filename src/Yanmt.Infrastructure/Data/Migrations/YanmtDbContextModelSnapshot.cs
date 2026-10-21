@@ -318,11 +318,39 @@ namespace Yanmt.Infrastructure.Data.Migrations
                     b.ToTable("MapLinks");
                 });
 
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.MetricSample", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("StatusSourceId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("TimestampUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<double>("Value")
+                        .HasColumnType("REAL");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("StatusSourceId", "TimestampUtc");
+
+                    b.ToTable("MetricSamples");
+                });
+
             modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.Node", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
+
+                    b.Property<double?>("CpuCriticalPercent")
+                        .HasColumnType("REAL");
+
+                    b.Property<double?>("CpuWarningPercent")
+                        .HasColumnType("REAL");
 
                     b.Property<DateTime>("CreatedUtc")
                         .HasColumnType("TEXT");
@@ -348,6 +376,12 @@ namespace Yanmt.Infrastructure.Data.Migrations
                         .IsRequired()
                         .HasMaxLength(45)
                         .HasColumnType("TEXT");
+
+                    b.Property<double?>("MemoryCriticalPercent")
+                        .HasColumnType("REAL");
+
+                    b.Property<double?>("MemoryWarningPercent")
+                        .HasColumnType("REAL");
 
                     b.Property<string>("Site")
                         .HasMaxLength(100)
@@ -390,6 +424,59 @@ namespace Yanmt.Infrastructure.Data.Migrations
                     b.HasIndex("SshProfileId");
 
                     b.ToTable("Nodes");
+                });
+
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.NodeSystemInfo", b =>
+                {
+                    b.Property<int>("NodeId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("EngineBoots")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("EngineId")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastPollUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastRebootUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastSuccessUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MemoryPool")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SysContact")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SysDescr")
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SysLocation")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SysName")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SysObjectId")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("UptimeTicks")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("NodeId");
+
+                    b.ToTable("NodeSystemInfo");
                 });
 
             modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.NodeTag", b =>
@@ -582,6 +669,17 @@ namespace Yanmt.Infrastructure.Data.Migrations
                     b.Navigation("To");
                 });
 
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.MetricSample", b =>
+                {
+                    b.HasOne("Yanmt.Infrastructure.Data.Entities.StatusSource", "StatusSource")
+                        .WithMany()
+                        .HasForeignKey("StatusSourceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("StatusSource");
+                });
+
             modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.Node", b =>
                 {
                     b.HasOne("Yanmt.Infrastructure.Data.Entities.CredentialProfile", "SnmpProfile")
@@ -597,6 +695,17 @@ namespace Yanmt.Infrastructure.Data.Migrations
                     b.Navigation("SnmpProfile");
 
                     b.Navigation("SshProfile");
+                });
+
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.NodeSystemInfo", b =>
+                {
+                    b.HasOne("Yanmt.Infrastructure.Data.Entities.Node", "Node")
+                        .WithOne()
+                        .HasForeignKey("Yanmt.Infrastructure.Data.Entities.NodeSystemInfo", "NodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Node");
                 });
 
             modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.NodeTag", b =>
