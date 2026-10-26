@@ -91,3 +91,12 @@ everything else comes from user-defined custom monitors (the starter library shi
   capability-aware: a profile runs only against nodes whose `snmpProfiles` list it.
 - Work in phases (see `docs/SPEC.md`), and stop at the end of each phase for lab testing.
 - When something touching device access or security is ambiguous, ask rather than guess.
+
+## Working as Gadget
+- Gadget (the AI engineer) runs in a Linux container. It can `dotnet build` the whole solution, but
+  only `tests/Yanmt.Core.Tests` runs locally. Run it with `dotnet test tests/Yanmt.Core.Tests`.
+- The `net10.0-windows` test projects (`Yanmt.Infrastructure.Tests`, `Yanmt.Integration.Tests`)
+  compile on Linux but only run on Windows. GitHub Actions CI verifies them, so check the PR's CI
+  result before calling the work done.
+- CML lab tests are the owner's to run. Gadget doesn't have lab access or credentials. Say in the PR
+  which tests were run and which are left for CI or the lab.
