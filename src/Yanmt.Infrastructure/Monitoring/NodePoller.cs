@@ -33,14 +33,20 @@ public abstract class NodePoller<TTarget, TSettings>(
     /// <summary>For log messages, e.g. "ICMP".</summary>
     protected abstract string Kind { get; }
 
-    /// <summary>Reads settings and the current targets (enabled nodes for this poll type).</summary>
+    /// <summary>
+    /// Reads settings and the current targets, keyed by a stable id (the node id for one-job-per-node
+    /// pollers). <paramref name="services"/> is a fresh scope.
+    /// </summary>
     protected abstract Task<(TSettings Settings, TimeSpan Interval, IReadOnlyDictionary<int, TTarget> Targets)> LoadAsync(
         IServiceProvider services, CancellationToken cancellationToken);
 
-    /// <summary>Polls one node. Exceptions are turned into a result by <see cref="Failed"/>.</summary>
-    protected abstract Task<PollResult> PollAsync(int nodeId, TTarget target, TSettings settings, DateTime startedUtc, CancellationToken cancellationToken);
+    /// <summary>A target's own interval, when targets don't all share the poller's.</summary>
+    protected virtual TimeSpan IntervalOf(TTarget target, TimeSpan interval) => interval;
 
-    protected abstract PollResult Failed(int nodeId, TTarget target, TSettings settings, DateTime startedUtc, Exception exception);
+    /// <summary>Polls one target. Exceptions are turned into a result by <see cref="Failed"/>.</summary>
+    protected abstract Task<PollResult> PollAsync(int key, TTarget target, TSettings settings, DateTime startedUtc, CancellationToken cancellationToken);
+
+    protected abstract PollResult Failed(int key, TTarget target, TSettings settings, DateTime startedUtc, Exception exception);
 
     /// <summary>Longest a single poll may run before it is cancelled and reported as failed.</summary>
     protected abstract TimeSpan Backstop(TSettings settings);
@@ -73,23 +79,23 @@ public abstract class NodePoller<TTarget, TSettings>(
             var (settings, interval, targets) = await LoadAsync(scope.ServiceProvider, cancellationToken);
             _settings = settings;
             _targets = targets;
-            _schedule.SetTargets(targets.Keys.ToList(), interval, now);
+            _schedule.SetTargets(targets.ToDictionary(t => t.Key, t => IntervalOf(t.Value, interval)), now);
             await engine.SyncAsync(cancellationToken);
             _loadedVersion = version;
             _nextReload = now + TimeSpan.FromSeconds(Math.Max(10, reloadSeconds));
-            logger.LogInformation("{Kind} polling {Count} node(s) every {Interval} s", Kind, targets.Count, interval.TotalSeconds);
+            logger.LogInformation("{Kind} polling {Count} target(s), default interval {Interval} s", Kind, targets.Count, interval.TotalSeconds);
         }
 
-        foreach (var nodeId in _schedule.TakeDue(now))
+        foreach (var key in _schedule.TakeDue(now))
         {
-            if (_targets.TryGetValue(nodeId, out var target) && _inFlight.TryAdd(nodeId, 0))
+            if (_targets.TryGetValue(key, out var target) && _inFlight.TryAdd(key, 0))
             {
-                _ = RunAsync(nodeId, target, _settings!, cancellationToken);
+                _ = RunAsync(key, target, _settings!, cancellationToken);
             }
         }
     }
 
-    private async Task RunAsync(int nodeId, TTarget target, TSettings settings, CancellationToken cancellationToken)
+    private async Task RunAsync(int key, TTarget target, TSettings settings, CancellationToken cancellationToken)
     {
         try
         {
@@ -102,12 +108,12 @@ public abstract class NodePoller<TTarget, TSettings>(
                 guard.CancelAfter(Backstop(settings));
                 try
                 {
-                    result = await PollAsync(nodeId, target, settings, started, guard.Token);
+                    result = await PollAsync(key, target, settings, started, guard.Token);
                 }
                 catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
                 {
-                    logger.LogDebug(ex, "{Kind} poll of node {NodeId} failed", Kind, nodeId);
-                    result = Failed(nodeId, target, settings, started, ex);
+                    logger.LogDebug(ex, "{Kind} poll {Key} failed", Kind, key);
+                    result = Failed(key, target, settings, started, ex);
                 }
             }
             finally
@@ -123,11 +129,11 @@ public abstract class NodePoller<TTarget, TSettings>(
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "{Kind} poll of node {NodeId} could not be queued", Kind, nodeId);
+            logger.LogError(ex, "{Kind} poll {Key} could not be queued", Kind, key);
         }
         finally
         {
-            _inFlight.TryRemove(nodeId, out _);
+            _inFlight.TryRemove(key, out _);
         }
     }
 

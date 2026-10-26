@@ -16,19 +16,28 @@
     else
     {
         <table class="grid">
-            <thead><tr><th class="col-state"></th><th>Source</th><th>Value</th><th>Since (UTC)</th></tr></thead>
+            <thead><tr><th class="col-state"></th><th>Source</th><th>Value</th><th>Last 24 h</th><th>Since (UTC)</th></tr></thead>
             <tbody>
                 @foreach (var s in Live.Sources)
                 {
                     <tr>
                         <td class="col-state"><StateDot State="s.State" Colors="Colors" /></td>
-                        <td>@SourceName(s.Type) @s.Key</td>
+                        <td>@SourceLabel(s)</td>
                         <td class="mono">@s.ValueText</td>
+                        <td>
+                            @if (_trends.TryGetValue((s.Type, s.Key), out var trend))
+                            {
+                                <Sparkline Points="trend" From="_trendFrom" To="_trendTo" />
+                            }
+                        </td>
                         <td class="mono nowrap">@s.SinceUtc.ToString("yyyy-MM-dd HH:mm:ss")</td>
                     </tr>
                 }
             </tbody>
         </table>
+        <AuthorizeView Policy="@YanmtPolicies.Admin">
+            <p class="muted">Custom monitors are applied from <a href="monitors">Monitors</a>, or with "Monitor this" on the Interfaces and SNMP query tabs.</p>
+        </AuthorizeView>
     }
 </section>
 
@@ -80,6 +89,11 @@
     private int _snmpInterval = 300;
     private int _icmpInterval = 60;
     private (int NodeId, int Version)? _loaded;
+    private Dictionary<(StatusSourceType Type, string Key), IReadOnlyList<Yanmt.Core.Charts.Bucket>> _trends = [];
+    private DateTime _trendFrom;
+    private DateTime _trendTo;
+
+    internal static string SourceLabel(SourceStatus s) => s.Type == StatusSourceType.Custom ? s.DisplayName ?? "Custom monitor" : SourceName(s.Type);
 
     protected override async Task OnParametersSetAsync()
     {
@@ -88,6 +102,7 @@
             _loaded = (NodeId, Version);
             (_cpu, _memory, _snmpInterval, _icmpInterval) = await Detail.GetPollingAsync(NodeId);
             _charts = await Detail.GetChartsAsync(NodeId, _range);
+            (_trendFrom, _trendTo, _trends) = await Detail.GetTrendsAsync(NodeId);
         }
     }
 

@@ -76,14 +76,22 @@
                                     {
                                         continue;
                                     }
+                                    var bound = BoundSource(link);
+                                    var linkText = LinkText(link, bound);
                                     <g @key="link.Id" data-link="@link.Id" data-from="@link.FromElementId" data-to="@link.ToElementId"
-                                       class="map-link @(_selectedLink == link.Id ? "selected" : null)">
+                                       class="map-link @(_selectedLink == link.Id ? "selected" : null) @(link.BoundInstanceId is null ? null : "bound")">
                                         <line class="map-link-hit" x1="@F(a.X)" y1="@F(a.Y)" x2="@F(b.X)" y2="@F(b.Y)" />
-                                        <line class="map-link-line" x1="@F(a.X)" y1="@F(a.Y)" x2="@F(b.X)" y2="@F(b.Y)" />
-                                        @if (!string.IsNullOrEmpty(link.Label))
+                                        <line class="map-link-line" x1="@F(a.X)" y1="@F(a.Y)" x2="@F(b.X)" y2="@F(b.Y)"
+                                              style="@(link.BoundInstanceId is null ? null : $"stroke:{_colors.For(bound?.State ?? Severity.Unknown)}")">
+                                            @if (link.BoundInstanceId is not null)
+                                            {
+                                                <title>@(bound?.DisplayName ?? "Bound monitor (not polled yet)"): @(bound?.State ?? Severity.Unknown) @bound?.ValueText</title>
+                                            }
+                                        </line>
+                                        @if (!string.IsNullOrEmpty(linkText))
                                         {
                                             <g>
-                                                <text class="map-link-label" x="@F((a.X + b.X) / 2)" y="@F((a.Y + b.Y) / 2 - 6)">@link.Label</text>
+                                                <text class="map-link-label" x="@F((a.X + b.X) / 2)" y="@F((a.Y + b.Y) / 2 - 6)">@linkText</text>
                                             </g>
                                         }
                                     </g>
@@ -137,7 +145,7 @@
                                     <option value="" selected="@(sel.LabelSourceType is null)">(none)</option>
                                     @foreach (var src in LabelChoices(sel))
                                     {
-                                        <option value="@LabelKey(src.Type, src.Key)" selected="@(sel.LabelSourceType == src.Type && sel.LabelSourceKey == src.Key)">@LabelName(src.Type, src.Key)</option>
+                                        <option value="@LabelKey(src.Type, src.Key)" selected="@(sel.LabelSourceType == src.Type && sel.LabelSourceKey == src.Key)">@LabelName(src)</option>
                                     }
                                 </select>
                                 <div class="hint">Sources appear here once they've been polled.</div>
@@ -166,7 +174,24 @@
                                 <button class="btn primary" @onclick="() => SaveLinkLabelAsync(link)" disabled="@_busy">Save label</button>
                                 <button class="btn danger-outline" @onclick="() => RemoveLinkAsync(link)" disabled="@_busy">Delete link</button>
                             </div>
-                            <div class="hint">Binding a link to an interface monitor arrives with custom monitors.</div>
+
+                            <label for="link-bind">Color from monitor</label>
+                            <select id="link-bind" @bind="_bindInstanceId">
+                                <option value="0">(none: neutral line)</option>
+                                @foreach (var c in _bindingChoices)
+                                {
+                                    <option value="@c.InstanceId">@c.Hostname: @c.Name</option>
+                                }
+                            </select>
+                            <label class="inline"><input type="checkbox" @bind="_bindShowValue" disabled="@(_bindInstanceId == 0)" /> show its value on the link</label>
+                            <div class="form-actions">
+                                <button class="btn" @onclick="() => SaveBindingAsync(link)" disabled="@_busy">Save binding</button>
+                            </div>
+                            <div class="hint">
+                                @(_bindingChoices.Count == 0
+                                    ? "No monitor instances on either end yet. Apply an interface monitor to one of the nodes (e.g. Monitor this on its Interfaces tab); it appears here after its first poll."
+                                    : "Monitors on either end node. Usually the interface the link uses, e.g. its oper status or utilization.")
+                            </div>
                         </section>
                     }
 
@@ -438,6 +463,9 @@
         _selectedElement = element?.Id;
         _selectedLink = kind == "link" ? id : null;
         _linkLabel = SelectedLink?.Label;
+        _bindInstanceId = SelectedLink?.BoundInstanceId ?? 0;
+        _bindShowValue = SelectedLink?.ShowBoundValue ?? false;
+        _bindingChoices = _selectedLink is { } linkId ? await Maps.LinkBindingChoicesAsync(linkId) : [];
         StateHasChanged();
     }
 
@@ -596,19 +624,36 @@
         });
     }
 
+    private int _bindInstanceId;
+    private bool _bindShowValue;
+    private List<LinkBindingChoice> _bindingChoices = [];
+
+    private SourceStatus? BoundSource(MapLinkView link) =>
+        link is { BoundNodeId: { } node, BoundInstanceId: { } instance }
+            ? Status.Get(node)?.Source(StatusSourceType.Custom, instance.ToString(CultureInfo.InvariantCulture))
+            : null;
+
+    private static string? LinkText(MapLinkView link, SourceStatus? bound) =>
+        link.ShowBoundValue && bound?.ValueText is { Length: > 0 } value
+            ? string.IsNullOrEmpty(link.Label) ? value : $"{link.Label} · {value}"
+            : link.Label;
+
+    private Task SaveBindingAsync(MapLinkView link) =>
+        RunAsync(() => Maps.SetLinkBindingAsync(link.Id, _bindInstanceId == 0 ? null : _bindInstanceId, _bindShowValue));
+
     private IEnumerable<SourceStatus> LabelChoices(MapElementView el) =>
         el.NodeId is { } id ? Status.Get(id)?.Sources ?? [] : [];
 
     private static string LabelKey(StatusSourceType type, string key) => $"{type}|{key}";
 
-    private static string LabelName(StatusSourceType type, string key) => type switch
+    private static string LabelName(SourceStatus s) => s.Type switch
     {
         StatusSourceType.Icmp => "ICMP latency",
         StatusSourceType.Cpu => "CPU (5 min)",
         StatusSourceType.Memory => "Memory used",
         StatusSourceType.Uptime => "Uptime",
-        _ when key.Length > 0 => $"{type} ({key})",
-        _ => type.ToString(),
+        StatusSourceType.Custom => s.DisplayName ?? "Custom monitor",
+        _ => s.Type.ToString(),
     };
 
     private Task SetLabelAsync(MapElementView el, string? value)

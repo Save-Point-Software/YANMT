@@ -26,7 +26,11 @@ public sealed record MapElementView(
     public string Title => Kind == MapElementKind.Node ? Hostname ?? "?" : TargetMapName ?? "?";
 }
 
-public sealed record MapLinkView(int Id, int FromElementId, int ToElementId, string? Label);
+/// <summary>A link. When bound, BoundNodeId/BoundInstanceId locate the monitor instance whose state colors it.</summary>
+public sealed record MapLinkView(int Id, int FromElementId, int ToElementId, string? Label, int? BoundInstanceId = null, int? BoundNodeId = null, bool ShowBoundValue = false);
+
+/// <summary>A monitor instance a link can be bound to: one on either end node.</summary>
+public sealed record LinkBindingChoice(int InstanceId, int NodeId, string Hostname, string Name);
 
 public sealed record MapView(
     int Id,

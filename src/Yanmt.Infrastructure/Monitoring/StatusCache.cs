@@ -7,7 +7,7 @@ using Yanmt.Infrastructure.Data.Entities;
 namespace Yanmt.Infrastructure.Monitoring;
 
 /// <summary>Current state and value of one enabled status source.</summary>
-public sealed record SourceStatus(StatusSourceType Type, string Key, Severity State, double? Value, string? ValueText, DateTime SinceUtc);
+public sealed record SourceStatus(StatusSourceType Type, string Key, Severity State, double? Value, string? ValueText, DateTime SinceUtc, string? DisplayName = null);
 
 /// <summary>A node's rolled-up state: worst of its enabled sources; Unknown if the node is disabled or has none.</summary>
 public sealed record NodeStatus(int NodeId, bool Enabled, Severity State, IReadOnlyList<SourceStatus> Sources)
@@ -46,8 +46,8 @@ public sealed class StatusCache
         foreach (var node in nodes)
         {
             var list = sources[node.Id]
-                .OrderBy(s => s.SourceType).ThenBy(s => s.SourceKey, StringComparer.Ordinal)
-                .Select(s => new SourceStatus(s.SourceType, s.SourceKey, s.State, s.Value, s.ValueText, s.SinceUtc))
+                .OrderBy(s => s.SourceType).ThenBy(s => s.DisplayName, StringComparer.OrdinalIgnoreCase).ThenBy(s => s.SourceKey, StringComparer.Ordinal)
+                .Select(s => new SourceStatus(s.SourceType, s.SourceKey, s.State, s.Value, s.ValueText, s.SinceUtc, s.DisplayName))
                 .ToList();
             var state = node.Enabled ? StatusRollup.Worst(list.Select(s => s.State)) : Severity.Unknown;
             var status = new NodeStatus(node.Id, node.Enabled, state, list);

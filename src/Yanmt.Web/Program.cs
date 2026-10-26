@@ -10,6 +10,7 @@ using Microsoft.Extensions.Hosting.WindowsServices;
 using Yanmt.Infrastructure;
 using Yanmt.Infrastructure.Data;
 using Yanmt.Infrastructure.Monitoring;
+using Yanmt.Infrastructure.Monitors;
 using Yanmt.Infrastructure.Security;
 using Yanmt.Web.Components;
 using Yanmt.Web.Endpoints;
@@ -99,6 +100,7 @@ try
     {
         var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<YanmtDbContext>>();
         await DatabaseInitializer.InitializeAsync(factory, startupLogger);
+        await StarterLibrary.SeedAsync(factory, app.Services.GetRequiredService<TimeProvider>());
 
         // Load (or create) the credential entropy file now, so an ACL problem stops startup clearly.
         var protector = app.Services.GetRequiredService<SecretProtector>();

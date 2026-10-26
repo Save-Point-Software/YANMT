@@ -1,0 +1,120 @@
+@page "/monitors"
+@using Yanmt.Core.Monitors
+@using Yanmt.Infrastructure.Monitors
+@inject MonitorService Monitors
+@inject NavigationManager Nav
+
+<PageTitle>Monitors - YANMT</PageTitle>
+
+<div class="page-header">
+    <h1>Custom monitors</h1>
+    <AuthorizeView Policy="@YanmtPolicies.Admin">
+        <div class="actions"><a class="btn primary" href="monitors/new">New monitor</a></div>
+    </AuthorizeView>
+</div>
+
+@if (_error is not null)
+{
+    <p class="error">@_error</p>
+}
+
+@if (_items is null)
+{
+    <p class="muted">Loading…</p>
+}
+else
+{
+    @foreach (var (title, items, hint) in Groups)
+    {
+        <section class="card">
+            <h2>@title</h2>
+            @if (hint is not null)
+            {
+                <p class="muted">@hint</p>
+            }
+            @if (!items.Any())
+            {
+                <p class="muted">None.</p>
+            }
+            else
+            {
+                <div class="table-wrap">
+                    <table class="grid">
+                        <thead>
+                            <tr><th>Monitor</th><th>OID</th><th>Value</th><th>Applied to</th><th>Instances</th><th></th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var m in items)
+                            {
+                                <tr class="@(m.Enabled ? null : "disabled")" @key="m.Id">
+                                    <td>
+                                        <AuthorizeView Policy="@YanmtPolicies.Admin">
+                                            <Authorized><a href="monitors/@m.Id">@m.Name</a></Authorized>
+                                            <NotAuthorized>@m.Name</NotAuthorized>
+                                        </AuthorizeView>
+                                        @if (!m.Enabled)
+                                        {
+                                            <span class="pill muted-pill">disabled</span>
+                                        }
+                                        @if (m.Description is { Length: > 0 })
+                                        {
+                                            <div class="muted small">@m.Description</div>
+                                        }
+                                    </td>
+                                    <td class="mono nowrap" title="@m.Oid">@(m.OidName ?? m.Oid)@(m.OidMode == OidMode.Table ? " (table)" : "")</td>
+                                    <td class="nowrap">@(m.ValueMode == ValueMode.Rate ? "rate/s" : "raw")@(m.IsPercent ? ", %" : "")</td>
+                                    <td>@m.AssignmentCount</td>
+                                    <td>@m.InstanceCount</td>
+                                    <td class="row-actions">
+                                        <AuthorizeView Policy="@YanmtPolicies.Admin">
+                                            <button class="btn link" @onclick="() => ToggleAsync(m)" disabled="@_busy">@(m.Enabled ? "Disable" : "Enable")</button>
+                                            <button class="btn link" @onclick="() => CopyAsync(m)" disabled="@_busy">Copy</button>
+                                        </AuthorizeView>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+    }
+}
+
+@code {
+    private List<MonitorListItem>? _items;
+    private string? _error;
+    private bool _busy;
+
+    private IEnumerable<(string Title, IEnumerable<MonitorListItem> Items, string? Hint)> Groups =>
+    [
+        ("Your monitors", (_items ?? []).Where(m => !m.IsStarter), null),
+        ("Starter library", (_items ?? []).Where(m => m.IsStarter),
+            "Examples shipped disabled. Enable one and apply it, or copy it and adapt the copy."),
+    ];
+
+    protected override async Task OnInitializedAsync() => _items = await Monitors.ListAsync();
+
+    private async Task ToggleAsync(MonitorListItem m)
+    {
+        _busy = true;
+        var r = await Monitors.SetEnabledAsync(m.Id, !m.Enabled);
+        _error = r.Ok ? null : r.Error;
+        _items = await Monitors.ListAsync();
+        _busy = false;
+    }
+
+    private async Task CopyAsync(MonitorListItem m)
+    {
+        _busy = true;
+        var r = await Monitors.CopyAsync(m.Id);
+        _busy = false;
+        if (r.Ok)
+        {
+            Nav.NavigateTo($"monitors/{r.Id}");
+            return;
+        }
+
+        _error = r.Error;
+    }
+}

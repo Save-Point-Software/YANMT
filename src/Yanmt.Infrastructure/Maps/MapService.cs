@@ -75,7 +75,8 @@ public sealed class MapService(IDbContextFactory<YanmtDbContext> dbFactory, Yanm
         var links = await db.MapLinks.AsNoTracking()
             .Where(l => l.MapId == id)
             .OrderBy(l => l.Id)
-            .Select(l => new MapLinkView(l.Id, l.FromElementId, l.ToElementId, l.Label))
+            .Select(l => new MapLinkView(l.Id, l.FromElementId, l.ToElementId, l.Label,
+                l.BoundMonitorInstanceId, l.BoundMonitorInstance != null ? l.BoundMonitorInstance.NodeId : null, l.ShowBoundValue))
             .ToListAsync(cancellationToken);
 
         var background = map.BackgroundImage is null ? null : $"maps/{map.Id}/background?v={Uri.EscapeDataString(map.BackgroundImage)}";
@@ -479,6 +480,54 @@ public sealed class MapService(IDbContextFactory<YanmtDbContext> dbFactory, Yanm
         }
 
         link.Label = label;
+        await db.SaveChangesAsync(cancellationToken);
+        return MapResult.Success(link.Id);
+    }
+
+    /// <summary>Monitor instances on the link's end nodes (submap ends have none), for the binding picker.</summary>
+    public async Task<List<LinkBindingChoice>> LinkBindingChoicesAsync(int linkId, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var ends = await db.MapLinks.AsNoTracking().Where(l => l.Id == linkId)
+            .Select(l => new { From = l.From.NodeId, To = l.To.NodeId }).FirstOrDefaultAsync(cancellationToken);
+        if (ends is null)
+        {
+            return [];
+        }
+
+        var nodeIds = new[] { ends.From, ends.To }.OfType<int>().Distinct().ToList();
+        var instances = await db.MonitorInstances.AsNoTracking()
+            .Where(i => nodeIds.Contains(i.NodeId))
+            .Select(i => new { i.Id, i.NodeId, i.Node.Hostname, Monitor = i.Definition.Name, i.Label, i.InstanceKey })
+            .ToListAsync(cancellationToken);
+        return instances
+            .Select(i => new LinkBindingChoice(i.Id, i.NodeId, i.Hostname,
+                i.InstanceKey.Length == 0 ? i.Monitor : $"{i.Monitor} · {i.Label ?? i.InstanceKey}"))
+            .OrderBy(c => c.Hostname, StringComparer.OrdinalIgnoreCase).ThenBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>Binds a link to a monitor instance on one of its end nodes (null unbinds), and whether to show its value.</summary>
+    public async Task<MapResult> SetLinkBindingAsync(int linkId, int? instanceId, bool showValue, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var link = await db.MapLinks.Include(l => l.From).Include(l => l.To).FirstOrDefaultAsync(l => l.Id == linkId, cancellationToken);
+        if (link is null)
+        {
+            return MapResult.Fail("That link no longer exists.");
+        }
+
+        if (instanceId is { } id)
+        {
+            var nodeId = await db.MonitorInstances.Where(i => i.Id == id).Select(i => (int?)i.NodeId).FirstOrDefaultAsync(cancellationToken);
+            if (nodeId is null || (nodeId != link.From.NodeId && nodeId != link.To.NodeId))
+            {
+                return MapResult.Fail("Bind the link to a monitor on one of its two nodes.");
+            }
+        }
+
+        link.BoundMonitorInstanceId = instanceId;
+        link.ShowBoundValue = instanceId is not null && showValue;
         await db.SaveChangesAsync(cancellationToken);
         return MapResult.Success(link.Id);
     }

@@ -1,0 +1,438 @@
+@page "/monitors/new"
+@page "/monitors/{Id:int}"
+@attribute [Authorize(Policy = YanmtPolicies.Admin)]
+@using Yanmt.Core.Monitors
+@using Yanmt.Core.Oids
+@using Yanmt.Infrastructure.Monitors
+@inject MonitorService Monitors
+@inject MonitorProbeService Probe
+@inject IOidNameResolver Names
+@inject NavigationManager Nav
+
+<PageTitle>@(IsNew ? "New monitor" : $"Edit {_originalName}") - YANMT</PageTitle>
+
+<div class="page monitor-edit">
+    <p><a href="monitors">← Monitors</a></p>
+    <h1>@(IsNew ? "New monitor" : _originalName)</h1>
+
+    @if (_notFound)
+    {
+        <p class="error">Monitor @Id does not exist (it may have been deleted).</p>
+    }
+    else if (_m is not null)
+    {
+        @if (_m.StarterKey is not null)
+        {
+            <p class="hint">This is a starter-library example. You can enable and apply it as it is, edit it, or copy it.</p>
+        }
+
+        <section class="card">
+            <h2>What to poll</h2>
+            <div class="field-row">
+                <div class="field">
+                    <label for="name">Name</label>
+                    <input id="name" @bind="_m.Name" maxlength="@MonitorValidation.MaxNameLength" />
+                    @Err(nameof(MonitorSpec.Name))
+                </div>
+                <div class="field narrow-field">
+                    <label class="inline"><input type="checkbox" @bind="_m.Enabled" /> Enabled</label>
+                </div>
+            </div>
+            <div class="field">
+                <label for="desc">Description</label>
+                <input id="desc" @bind="_m.Description" maxlength="@MonitorValidation.MaxDescriptionLength" />
+                @Err("Description")
+            </div>
+
+            <div class="field">
+                <label>The OID is</label>
+                <div class="inline">
+                    <label class="inline"><input type="radio" name="mode" checked="@(_m.OidMode == OidMode.Scalar)" @onchange="() => _m.OidMode = OidMode.Scalar" /> a scalar (e.g. sysUpTime.0)</label>
+                    <label class="inline"><input type="radio" name="mode" checked="@(_m.OidMode == OidMode.Table)" @onchange="() => _m.OidMode = OidMode.Table" /> a table column (e.g. ifOperStatus)</label>
+                </div>
+                @Err(nameof(MonitorSpec.OidMode))
+                <div class="hint">
+                    @if (_m.OidMode == OidMode.Table)
+                    {
+                        <span>When you apply a table monitor you choose one row (e.g. one interface) or every row.</span>
+                    }
+                    else
+                    {
+                        <span>A scalar includes its instance, usually <code>.0</code>.</span>
+                    }
+                </div>
+            </div>
+
+            <div class="field-row">
+                <div class="field">
+                    <label for="oid">OID</label>
+                    <input id="oid" class="mono" @bind="_m.Oid" list="oid-names" placeholder="name or number" />
+                    <div class="hint mono">@Resolved(_m.Oid)</div>
+                    @Err(nameof(MonitorSpec.Oid))
+                </div>
+                @if (_m.OidMode == OidMode.Table)
+                {
+                    <div class="field">
+                        <label for="label-oid">Row label column</label>
+                        <input id="label-oid" class="mono" @bind="_m.LabelOid" list="oid-names" placeholder="e.g. ifDescr, ifAlias, ifName" />
+                        <div class="hint mono">@Resolved(_m.LabelOid)</div>
+                        @Err(nameof(MonitorSpec.LabelOid))
+                    </div>
+                }
+            </div>
+            <datalist id="oid-names">
+                @foreach (var n in Names.All)
+                {
+                    <option value="@n.Name">@n.Module @n.Oid</option>
+                }
+            </datalist>
+        </section>
+
+        <section class="card">
+            <h2>Value</h2>
+            <div class="field-row">
+                <div class="field narrow-field">
+                    <label for="vmode">Use</label>
+                    <select id="vmode" @bind="_m.ValueMode">
+                        <option value="@ValueMode.Raw">the value as polled</option>
+                        <option value="@ValueMode.Rate">its rate per second (counters)</option>
+                    </select>
+                </div>
+                <div class="field narrow-field">
+                    <label for="scale">Multiplied by</label>
+                    <input id="scale" @bind="_m.Scale" />
+                    @Err(nameof(MonitorSpec.Scale))
+                </div>
+                <div class="field narrow-field">
+                    <label for="unit">Unit</label>
+                    <input id="unit" @bind="_m.Unit" maxlength="@MonitorValidation.MaxUnitLength" placeholder="e.g. %, errors/s" />
+                    @Err(nameof(MonitorSpec.Unit))
+                </div>
+            </div>
+            <div class="field-row">
+                <div class="field">
+                    <label for="den">As a percentage of (optional)</label>
+                    <input id="den" class="mono" @bind="_m.DenominatorOid" list="oid-names" placeholder="e.g. ifHighSpeed" />
+                    <div class="hint mono">@Resolved(_m.DenominatorOid)</div>
+                    @Err(nameof(MonitorSpec.DenominatorOid))
+                </div>
+                <div class="field narrow-field">
+                    <label for="den-scale">multiplied by</label>
+                    <input id="den-scale" @bind="_m.DenominatorScale" />
+                </div>
+            </div>
+            <div class="hint">
+                Value = (polled value or rate) × multiplier@(string.IsNullOrWhiteSpace(_m.DenominatorOid) ? "" : " ÷ (second OID × its multiplier) × 100").
+                For interface utilization: rate of ifHCInOctets × 8, as a percentage of ifHighSpeed × 1000000.
+                @if (_m.OidMode == OidMode.Table)
+                {
+                    <span>For a table monitor the second OID is read from the same row.</span>
+                }
+            </div>
+            <div class="field">
+                <label for="vmap">Value map (optional)</label>
+                <input id="vmap" @bind="_m.ValueMap" placeholder="1=up, 2=down" />
+                @Err(nameof(MonitorSpec.ValueMap))
+                <div class="hint">Turns numbers into labels. Rules can then say <code>= down</code>; contains/regex rules match the label.</div>
+            </div>
+        </section>
+
+        <section class="card">
+            <h2>State rules <span class="muted">(first match wins)</span></h2>
+            <table class="grid rules">
+                <tbody>
+                    @for (var i = 0; i < _m.Rules.Count; i++)
+                    {
+                        var index = i;
+                        var r = _m.Rules[i];
+                        <tr @key="r">
+                            <td class="muted">@(index + 1)</td>
+                            <td>
+                                <select @bind="r.Operator" aria-label="Operator">
+                                    @foreach (var op in Enum.GetValues<RuleOperator>())
+                                    {
+                                        <option value="@op">@MonitorValidation.Symbol(op)</option>
+                                    }
+                                </select>
+                            </td>
+                            <td>
+                                <input class="mono" @bind="r.Value" aria-label="Value" />
+                                @if (r.Operator == RuleOperator.Between)
+                                {
+                                    <span> and </span>
+                                    <input class="mono narrow" @bind="r.Value2" aria-label="Second value" />
+                                }
+                            </td>
+                            <td>→</td>
+                            <td>
+                                <select @bind="r.State" aria-label="Resulting state">
+                                    <option value="@Severity.Normal">Normal</option>
+                                    <option value="@Severity.Warning">Warning</option>
+                                    <option value="@Severity.Critical">Critical</option>
+                                </select>
+                            </td>
+                            <td class="row-actions">
+                                <button class="btn link" title="Move up" disabled="@(index == 0)" @onclick="() => Move(index, -1)">↑</button>
+                                <button class="btn link" title="Move down" disabled="@(index == _m.Rules.Count - 1)" @onclick="() => Move(index, 1)">↓</button>
+                                <button class="btn link" title="Delete rule" @onclick="() => _m.Rules.RemoveAt(index)">✕</button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            @Err(nameof(MonitorSpec.Rules))
+            <div class="form-actions">
+                <button class="btn" @onclick="() => _m.Rules.Add(new RuleRow())" disabled="@(_m.Rules.Count >= MonitorValidation.MaxRules)">+ Add rule</button>
+                <label class="inline">Default when no rule matches
+                    <select @bind="_m.DefaultState">
+                        <option value="@Severity.Normal">Normal</option>
+                        <option value="@Severity.Warning">Warning</option>
+                        <option value="@Severity.Critical">Critical</option>
+                        <option value="@Severity.Unknown">Unknown</option>
+                    </select>
+                </label>
+            </div>
+            <div class="hint">No value at all (missing object, first rate sample) is always Unknown, whatever the rules say.</div>
+        </section>
+
+        <section class="card">
+            <h2>Polling</h2>
+            <div class="field-row">
+                <div class="field narrow-field">
+                    <label for="interval">Interval (s)</label>
+                    <input id="interval" type="number" @bind="_m.IntervalSeconds" placeholder="SNMP default" />
+                    @Err(nameof(MonitorSpec.IntervalSeconds))
+                </div>
+                <div class="field narrow-field">
+                    <label for="consec">Consecutive matches</label>
+                    <input id="consec" type="number" @bind="_m.ConsecutiveMatches" min="1" max="@MonitorValidation.MaxConsecutiveMatches" />
+                    @Err(nameof(MonitorSpec.ConsecutiveMatches))
+                </div>
+                <div class="field narrow-field">
+                    <label class="inline"><input type="checkbox" @bind="_m.RaiseEvents" /> Log state changes as events</label>
+                </div>
+            </div>
+            <div class="hint">A new state must hold for this many polls in a row before it takes effect (1 = immediately).</div>
+
+            @if (_m.OidMode == OidMode.Table)
+            {
+                <h3>Row filters (for "every row")</h3>
+                <div class="field-row">
+                    <div class="field">
+                        <label for="fil-oid">Only rows where column</label>
+                        <input id="fil-oid" class="mono" @bind="_m.FilterOid" list="oid-names" placeholder="e.g. ifAdminStatus" />
+                        <div class="hint mono">@Resolved(_m.FilterOid)</div>
+                        @Err(nameof(MonitorSpec.FilterOid))
+                    </div>
+                    <div class="field narrow-field">
+                        <label for="fil-op">is</label>
+                        <select id="fil-op" @bind="_m.FilterOperator">
+                            @foreach (var op in Enum.GetValues<RuleOperator>().Where(o => o != RuleOperator.Between))
+                            {
+                                <option value="@op">@MonitorValidation.Symbol(op)</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="field narrow-field">
+                        <label for="fil-val">value</label>
+                        <input id="fil-val" class="mono" @bind="_m.FilterValue" placeholder="e.g. 1" />
+                    </div>
+                </div>
+                <div class="field">
+                    <label for="lbl-re">and whose label matches (regex)</label>
+                    <input id="lbl-re" class="mono" @bind="_m.LabelRegex" placeholder="e.g. ^(Gi|Te|Tunnel)" />
+                    @Err(nameof(MonitorSpec.LabelRegex))
+                </div>
+                <div class="hint">Filters only apply when a monitor is applied to every row; a row you pick is always polled.</div>
+            }
+        </section>
+
+        @if (_error is not null)
+        {
+            <p class="error">@_error</p>
+        }
+
+        <div class="form-actions">
+            <button class="btn primary" @onclick="SaveAsync" disabled="@_busy">@(IsNew ? "Create" : "Save")</button>
+            <a class="btn" href="monitors">Cancel</a>
+            @if (!IsNew)
+            {
+                <button class="btn" @onclick="CopyAsync" disabled="@_busy">Copy</button>
+                <span class="spacer"></span>
+                @if (_confirmDelete)
+                {
+                    <span>Delete @_originalName with all its states and history?</span>
+                    <button class="btn danger" @onclick="DeleteAsync" disabled="@_busy">Yes, delete</button>
+                    <button class="btn" @onclick="() => _confirmDelete = false">Keep</button>
+                }
+                else
+                {
+                    <button class="btn danger-outline" @onclick="() => _confirmDelete = true">Delete…</button>
+                }
+            }
+            @if (_saved)
+            {
+                <span class="success">Saved.</span>
+            }
+        </div>
+
+        <MonitorTestPanel Model="_m" InitialNodeId="NodeParam" InitialInstance="InstanceParam" />
+
+        @if (!IsNew)
+        {
+            <MonitorAssignmentsPanel DefinitionId="Id!.Value" Model="_m" />
+        }
+        else
+        {
+            <p class="muted">Create the monitor, then apply it to nodes or tags.</p>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public int? Id { get; set; }
+
+    [SupplyParameterFromQuery(Name = "oid")] public string? OidParam { get; set; }
+    [SupplyParameterFromQuery(Name = "node")] public int? NodeParam { get; set; }
+    [SupplyParameterFromQuery(Name = "instance")] public string? InstanceParam { get; set; }
+
+    private MonitorEditModel? _m;
+    private Dictionary<string, string> _errors = [];
+    private string? _originalName;
+    private string? _error;
+    private bool _notFound;
+    private bool _busy;
+    private bool _saved;
+    private bool _confirmDelete;
+
+    private bool IsNew => Id is null;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _errors = [];
+        _error = null;
+        _saved = false;
+        if (IsNew)
+        {
+            _m = new MonitorEditModel
+            {
+                Rules = [new RuleRow { Operator = RuleOperator.Equal, Value = "1", State = Severity.Normal }],
+                DefaultState = Severity.Critical,
+            };
+            if (OidParam is { Length: > 0 } oid)
+            {
+                // From the query tool's "Monitor this": a row of a known table column becomes a table monitor.
+                _m.OidMode = InstanceParam is { Length: > 0 } ? OidMode.Table : OidMode.Scalar;
+                _m.Oid = oid;
+                _m.Name = Names.Describe(oid) ?? oid;
+            }
+
+            _originalName = null;
+            return;
+        }
+
+        var loaded = await Monitors.GetAsync(Id!.Value);
+        _notFound = loaded is null;
+        _m = loaded?.Model;
+        _originalName = _m?.Name;
+    }
+
+    private string? Resolved(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        return Names.TryParse(text, out var oid) ? (Names.Describe(oid) is { } n && n != text.Trim() ? $"{oid} = {n}" : oid) : "not a numeric OID or known name";
+    }
+
+    private RenderFragment? Err(string field) => _errors.TryGetValue(field, out var e) ? @<div class="validation-message">@e</div> : null;
+
+    private void Move(int index, int by)
+    {
+        var rule = _m!.Rules[index];
+        _m.Rules.RemoveAt(index);
+        _m.Rules.Insert(index + by, rule);
+    }
+
+    private async Task SaveAsync()
+    {
+        _busy = true;
+        _saved = false;
+        _error = null;
+        var (_, errors) = Monitors.BuildSpec(_m!);
+        _errors = errors.ToDictionary(e => e.Field, e => e.Error);
+        if (_errors.Count > 0)
+        {
+            _error = "Fix the highlighted fields.";
+            _busy = false;
+            return;
+        }
+
+        var result = IsNew ? await Monitors.CreateAsync(_m!) : await Monitors.UpdateAsync(Id!.Value, _m!);
+        _busy = false;
+        if (!result.Ok)
+        {
+            if (result.Field is { } f)
+            {
+                _errors[f] = result.Error!;
+            }
+
+            _error = result.Error;
+            return;
+        }
+
+        if (IsNew)
+        {
+            // From "Monitor this": apply it to the node (and row) it came from straight away.
+            if (NodeParam is { } node)
+            {
+                if (InstanceParam is { Length: > 0 } instance)
+                {
+                    await Probe.AddInstanceAsync(result.Id!.Value, node, instance);
+                }
+                else
+                {
+                    await Monitors.AddAssignmentAsync(result.Id!.Value, Yanmt.Infrastructure.Data.Entities.AssignmentScope.Node, node, null, null, null);
+                }
+            }
+
+            Nav.NavigateTo($"monitors/{result.Id}");
+            return;
+        }
+
+        _originalName = _m!.Name;
+        _saved = true;
+    }
+
+    private async Task CopyAsync()
+    {
+        _busy = true;
+        var r = await Monitors.CopyAsync(Id!.Value);
+        _busy = false;
+        if (r.Ok)
+        {
+            Nav.NavigateTo($"monitors/{r.Id}");
+        }
+        else
+        {
+            _error = r.Error;
+        }
+    }
+
+    private async Task DeleteAsync()
+    {
+        _busy = true;
+        var r = await Monitors.DeleteAsync(Id!.Value);
+        _busy = false;
+        if (r.Ok)
+        {
+            Nav.NavigateTo("monitors");
+        }
+        else
+        {
+            _error = r.Error;
+        }
+    }
+}

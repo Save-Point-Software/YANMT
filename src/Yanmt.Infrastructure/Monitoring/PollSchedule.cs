@@ -29,53 +29,53 @@ public sealed class InventoryChangeSignal
 }
 
 /// <summary>
-/// Next-due times for one poll type. New targets are staggered over the first few seconds so a
-/// restart doesn't fire every node at once, and each target keeps a steady cadence afterwards.
+/// Next-due times for one poller. New targets are staggered over the first few seconds so a
+/// restart doesn't fire every node at once, and each target keeps a steady cadence at its own
+/// interval afterwards.
 /// </summary>
 internal sealed class PollSchedule
 {
     private static readonly TimeSpan MaxStagger = TimeSpan.FromSeconds(15);
 
-    private readonly Dictionary<int, DateTimeOffset> _due = [];
-
-    public TimeSpan Interval { get; private set; }
+    private readonly Dictionary<int, (DateTimeOffset Due, TimeSpan Interval)> _due = [];
 
     public int Count => _due.Count;
 
-    public void SetTargets(IReadOnlyCollection<int> targets, TimeSpan interval, DateTimeOffset now)
+    public void SetTargets(IReadOnlyCollection<int> targets, TimeSpan interval, DateTimeOffset now) =>
+        SetTargets(targets.ToDictionary(t => t, _ => interval), now);
+
+    public void SetTargets(IReadOnlyDictionary<int, TimeSpan> targets, DateTimeOffset now)
     {
-        Interval = interval;
-        var keep = targets.ToHashSet();
-        foreach (var id in _due.Keys.Where(id => !keep.Contains(id)).ToList())
+        foreach (var id in _due.Keys.Where(id => !targets.ContainsKey(id)).ToList())
         {
             _due.Remove(id);
         }
 
-        var added = targets.Where(id => !_due.ContainsKey(id)).ToList();
-        var window = interval < MaxStagger ? interval : MaxStagger;
+        var added = targets.Keys.Where(id => !_due.ContainsKey(id)).ToList();
         for (var i = 0; i < added.Count; i++)
         {
-            _due[added[i]] = now + window * i / added.Count;
+            var interval = targets[added[i]];
+            var window = interval < MaxStagger ? interval : MaxStagger;
+            _due[added[i]] = (now + window * i / added.Count, interval);
         }
 
-        // A shorter interval takes effect without waiting out the old one.
-        foreach (var (id, due) in _due.ToList())
+        // A changed interval applies now; a shorter one doesn't wait out the old one.
+        foreach (var (id, (due, _)) in _due.ToList())
         {
-            if (due > now + interval)
-            {
-                _due[id] = now + interval;
-            }
+            var interval = targets[id];
+            _due[id] = (due > now + interval ? now + interval : due, interval);
         }
     }
 
     /// <summary>Targets due now, each rescheduled one interval on (or from now, if it fell behind).</summary>
     public List<int> TakeDue(DateTimeOffset now)
     {
-        var due = _due.Where(kv => kv.Value <= now).Select(kv => kv.Key).ToList();
+        var due = _due.Where(kv => kv.Value.Due <= now).Select(kv => kv.Key).ToList();
         foreach (var id in due)
         {
-            var next = _due[id] + Interval;
-            _due[id] = next > now ? next : now + Interval;
+            var (at, interval) = _due[id];
+            var next = at + interval;
+            _due[id] = (next > now ? next : now + interval, interval);
         }
 
         return due;

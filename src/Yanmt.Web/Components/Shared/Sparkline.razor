@@ -1,0 +1,44 @@
+@using System.Globalization
+@using System.Text
+@using Yanmt.Core.Charts
+
+@* A tiny trend line (no axes) for a table cell. The tooltip gives the range. *@
+@if (Points.Count > 1)
+{
+    <svg class="sparkline" viewBox="0 0 @W @H" width="@W" height="@H" role="img" aria-label="@Tooltip">
+        <title>@Tooltip</title>
+        <polyline points="@Path()" />
+    </svg>
+}
+else
+{
+    <span class="muted small">@(Points.Count == 1 ? "1 sample" : "")</span>
+}
+
+@code {
+    private const int W = 120, H = 24;
+
+    [Parameter, EditorRequired] public IReadOnlyList<Bucket> Points { get; set; } = [];
+    [Parameter] public DateTime From { get; set; }
+    [Parameter] public DateTime To { get; set; }
+
+    private string Tooltip => Points.Count == 0 ? "" :
+        $"last 24 h: min {Points.Min(p => p.Min).ToString("0.##", CultureInfo.InvariantCulture)}, max {Points.Max(p => p.Max).ToString("0.##", CultureInfo.InvariantCulture)}";
+
+    private string Path()
+    {
+        var min = Points.Min(p => p.Avg);
+        var max = Points.Max(p => p.Avg);
+        var span = max - min == 0 ? 1 : max - min;
+        var total = Math.Max(1, (To - From).TotalSeconds);
+        var sb = new StringBuilder();
+        foreach (var p in Points)
+        {
+            var x = (p.Time - From).TotalSeconds / total * (W - 2) + 1;
+            var y = H - 2 - (p.Avg - min) / span * (H - 4);
+            sb.Append(x.ToString("0.#", CultureInfo.InvariantCulture)).Append(',').Append(y.ToString("0.#", CultureInfo.InvariantCulture)).Append(' ');
+        }
+
+        return sb.ToString();
+    }
+}

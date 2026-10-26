@@ -293,6 +293,9 @@ namespace Yanmt.Infrastructure.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<int?>("BoundMonitorInstanceId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("FromElementId")
                         .HasColumnType("INTEGER");
 
@@ -303,10 +306,15 @@ namespace Yanmt.Infrastructure.Data.Migrations
                     b.Property<int>("MapId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("ShowBoundValue")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("ToElementId")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("BoundMonitorInstanceId");
 
                     b.HasIndex("FromElementId");
 
@@ -338,6 +346,197 @@ namespace Yanmt.Infrastructure.Data.Migrations
                     b.HasIndex("StatusSourceId", "TimestampUtc");
 
                     b.ToTable("MetricSamples");
+                });
+
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.MonitorAssignment", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("DefinitionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("InstanceLabel")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InstanceSuffix")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("NodeId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Scope")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TagName")
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT")
+                        .UseCollation("NOCASE");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NodeId");
+
+                    b.HasIndex("DefinitionId", "Scope", "NodeId", "TagName", "InstanceSuffix");
+
+                    b.ToTable("MonitorAssignments");
+                });
+
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.MonitorDefinition", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ConsecutiveMatches")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DefaultState")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DenominatorOid")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("DenominatorScale")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("FilterOid")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FilterOperator")
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FilterValue")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("IntervalSeconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("LabelOid")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LabelRegex")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT")
+                        .UseCollation("NOCASE");
+
+                    b.Property<string>("Oid")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OidMode")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("RaiseEvents")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("RulesJson")
+                        .IsRequired()
+                        .HasMaxLength(16000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("Scale")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StarterKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Unit")
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ValueMap")
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ValueMode")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Name")
+                        .IsUnique();
+
+                    b.ToTable("MonitorDefinitions");
+                });
+
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.MonitorInstance", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("DefinitionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("InstanceKey")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Label")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal?>("LastRaw")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastRawUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("LastUptimeTicks")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("NodeId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NodeId");
+
+                    b.HasIndex("DefinitionId", "NodeId", "InstanceKey")
+                        .IsUnique();
+
+                    b.ToTable("MonitorInstances");
                 });
 
             modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.Node", b =>
@@ -518,6 +717,10 @@ namespace Yanmt.Infrastructure.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("DisplayName")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
                     b.Property<bool>("Enabled")
                         .HasColumnType("INTEGER");
 
@@ -644,6 +847,11 @@ namespace Yanmt.Infrastructure.Data.Migrations
 
             modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.MapLink", b =>
                 {
+                    b.HasOne("Yanmt.Infrastructure.Data.Entities.MonitorInstance", "BoundMonitorInstance")
+                        .WithMany()
+                        .HasForeignKey("BoundMonitorInstanceId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("Yanmt.Infrastructure.Data.Entities.MapElement", "From")
                         .WithMany()
                         .HasForeignKey("FromElementId")
@@ -662,6 +870,8 @@ namespace Yanmt.Infrastructure.Data.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.Navigation("BoundMonitorInstance");
+
                     b.Navigation("From");
 
                     b.Navigation("Map");
@@ -678,6 +888,43 @@ namespace Yanmt.Infrastructure.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("StatusSource");
+                });
+
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.MonitorAssignment", b =>
+                {
+                    b.HasOne("Yanmt.Infrastructure.Data.Entities.MonitorDefinition", "Definition")
+                        .WithMany("Assignments")
+                        .HasForeignKey("DefinitionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Yanmt.Infrastructure.Data.Entities.Node", "Node")
+                        .WithMany()
+                        .HasForeignKey("NodeId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.Navigation("Definition");
+
+                    b.Navigation("Node");
+                });
+
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.MonitorInstance", b =>
+                {
+                    b.HasOne("Yanmt.Infrastructure.Data.Entities.MonitorDefinition", "Definition")
+                        .WithMany()
+                        .HasForeignKey("DefinitionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Yanmt.Infrastructure.Data.Entities.Node", "Node")
+                        .WithMany()
+                        .HasForeignKey("NodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Definition");
+
+                    b.Navigation("Node");
                 });
 
             modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.Node", b =>
@@ -743,6 +990,11 @@ namespace Yanmt.Infrastructure.Data.Migrations
                     b.Navigation("Elements");
 
                     b.Navigation("Links");
+                });
+
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.MonitorDefinition", b =>
+                {
+                    b.Navigation("Assignments");
                 });
 
             modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.Node", b =>

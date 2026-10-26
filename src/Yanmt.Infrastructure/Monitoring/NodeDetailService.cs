@@ -77,6 +77,29 @@ public sealed class NodeDetailService(IDbContextFactory<YanmtDbContext> dbFactor
             .FirstOrDefaultAsync(cancellationToken);
     }
 
+    /// <summary>Last-24-hour trend per numeric source of a node (CPU, memory, custom monitors), keyed by StatusSource id.</summary>
+    public async Task<(DateTime From, DateTime To, Dictionary<(StatusSourceType Type, string Key), IReadOnlyList<Bucket>> Trends)> GetTrendsAsync(
+        int nodeId, CancellationToken cancellationToken = default)
+    {
+        var to = clock.GetUtcNow().UtcDateTime;
+        var from = to.AddDays(-1);
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var sources = await db.StatusSources.AsNoTracking().Where(s => s.NodeId == nodeId)
+            .Select(s => new { s.Id, s.SourceType, s.SourceKey }).ToListAsync(cancellationToken);
+        var ids = sources.Select(s => s.Id).ToList();
+        var samples = (await db.MetricSamples.AsNoTracking()
+                .Where(m => ids.Contains(m.StatusSourceId) && m.TimestampUtc >= from)
+                .Select(m => new { m.StatusSourceId, m.TimestampUtc, m.Value })
+                .ToListAsync(cancellationToken))
+            .ToLookup(m => m.StatusSourceId);
+        var trends = sources
+            .Where(s => samples[s.Id].Any())
+            .ToDictionary(
+                s => (s.SourceType, s.SourceKey),
+                s => Downsampler.Downsample(samples[s.Id].Select(m => new Sample(m.TimestampUtc, m.Value)), from, to, 60));
+        return (from, to, trends);
+    }
+
     /// <summary>
     /// Raw samples for the range, bucketed for drawing. (Hourly rollups for longer ranges arrive
     /// with retention in Phase 6; raw samples are kept 7 days, which covers every range offered.)

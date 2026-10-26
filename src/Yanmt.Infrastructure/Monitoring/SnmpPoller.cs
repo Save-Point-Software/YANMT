@@ -57,8 +57,7 @@ public sealed class SnmpPoller(
             .Select(n => new { n.Id, n.Hostname, n.ManagementIp, n.SnmpProfileId, n.CpuWarningPercent, n.CpuCriticalPercent, n.MemoryWarningPercent, n.MemoryCriticalPercent })
             .ToListAsync(cancellationToken);
 
-        // Nodes usually share a few profiles: decrypt each once per reload.
-        var profiles = new Dictionary<int, ((SnmpV3Credential Credential, int Port)? Loaded, string? Error)>();
+        var profiles = new SnmpProfileLoader(credentials);
         var targets = new Dictionary<int, SnmpPollTarget>();
         foreach (var n in nodes)
         {
@@ -68,21 +67,7 @@ public sealed class SnmpPoller(
                 continue;
             }
 
-            var profileId = n.SnmpProfileId!.Value;
-            if (!profiles.TryGetValue(profileId, out var profile))
-            {
-                try
-                {
-                    var loaded = await credentials.LoadSnmpAsync(profileId, cancellationToken);
-                    profile = (loaded, loaded is null ? "The assigned SNMPv3 profile no longer exists." : null);
-                }
-                catch (SecretUnreadableException)
-                {
-                    profile = (null, "The SNMPv3 profile's passwords can't be decrypted on this server; re-enter them under Credentials.");
-                }
-
-                profiles[profileId] = profile;
-            }
+            var profile = await profiles.LoadAsync(n.SnmpProfileId!.Value, cancellationToken);
 
             targets[n.Id] = new SnmpPollTarget(
                 n.Hostname,
@@ -126,4 +111,30 @@ public sealed class SnmpPoller(
 
     // A GET plus up to two walks of a few requests each, each request possibly retried once.
     protected override TimeSpan Backstop(SnmpSettings settings) => TimeSpan.FromMilliseconds(settings.TimeoutMs * 12L);
+}
+
+/// <summary>Decrypts SNMP profiles for a poller reload; nodes usually share a few, so each is read once.</summary>
+internal sealed class SnmpProfileLoader(CredentialService credentials)
+{
+    private readonly Dictionary<int, ((SnmpV3Credential Credential, int Port)? Loaded, string? Error)> _profiles = [];
+
+    public async Task<((SnmpV3Credential Credential, int Port)? Loaded, string? Error)> LoadAsync(int profileId, CancellationToken cancellationToken)
+    {
+        if (!_profiles.TryGetValue(profileId, out var profile))
+        {
+            try
+            {
+                var loaded = await credentials.LoadSnmpAsync(profileId, cancellationToken);
+                profile = (loaded, loaded is null ? "The assigned SNMPv3 profile no longer exists." : null);
+            }
+            catch (SecretUnreadableException)
+            {
+                profile = (null, "The SNMPv3 profile's passwords can't be decrypted on this server; re-enter them under Credentials.");
+            }
+
+            _profiles[profileId] = profile;
+        }
+
+        return profile;
+    }
 }

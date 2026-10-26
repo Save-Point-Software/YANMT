@@ -1,7 +1,11 @@
 @using Yanmt.Core.Monitoring
 @using Yanmt.Infrastructure.Monitoring
+@using Yanmt.Infrastructure.Monitors
 @implements IDisposable
 @inject InterfaceService Interfaces
+@inject MonitorService Monitors
+@inject MonitorProbeService Probe
+@inject AuthenticationStateProvider Auth
 
 @* Live IF-MIB walk on demand (never polled continuously), with rates from two counter samples. *@
 <section class="card">
@@ -31,6 +35,30 @@
     }
     else if (_table is { } t)
     {
+        @if (_isAdmin)
+        {
+            <div class="inline monitor-this">
+                @if (_ifMonitors.Count == 0)
+                {
+                    <span class="muted">To monitor an interface, enable an interface monitor first (e.g. "Interface oper status" in the <a href="monitors">starter library</a>).</span>
+                }
+                else
+                {
+                    <label class="inline">Monitor this with
+                        <select @bind="_monitorId">
+                            @foreach (var (id, name) in _ifMonitors)
+                            {
+                                <option value="@id">@name</option>
+                            }
+                        </select>
+                    </label>
+                    @if (_applied is not null)
+                    {
+                        <span class="@(_appliedOk ? "success" : "error")">@_applied</span>
+                    }
+                }
+            </div>
+        }
         <p class="muted">
             @t.Rows.Count interfaces. Rates are averages over the @t.SampleSeconds.ToString("0.#") s between two samples.
             @if (t.Truncated)
@@ -44,6 +72,10 @@
                     <tr>
                         <th>ifIndex</th><th>Name</th><th>Description</th><th>Alias</th><th>Admin</th><th>Oper</th>
                         <th class="num">Speed</th><th class="num">In</th><th class="num">Out</th><th class="num">In %</th><th class="num">Out %</th>
+                        @if (_isAdmin && _ifMonitors.Count > 0)
+                        {
+                            <th></th>
+                        }
                     </tr>
                 </thead>
                 <tbody>
@@ -61,12 +93,15 @@
                             <td class="num">@(r.OutBps is { } o ? Units.BitsPerSecond(o) : "")</td>
                             <td class="num">@Pct(r.InUtilization)</td>
                             <td class="num">@Pct(r.OutUtilization)</td>
+                            @if (_isAdmin && _ifMonitors.Count > 0)
+                            {
+                                <td><button class="btn link" @onclick="() => MonitorAsync(r)" disabled="@_busy">Monitor this</button></td>
+                            }
                         </tr>
                     }
                 </tbody>
             </table>
         </div>
-        <p class="muted">"Monitor this" (turning an interface into a custom monitor) arrives with custom monitors in Phase 4.</p>
     }
 </section>
 
@@ -81,6 +116,29 @@
     private string _filter = "";
     private bool _upOnly;
     private bool _started;
+    private bool _isAdmin;
+    private List<(int Id, string Name)> _ifMonitors = [];
+    private int _monitorId;
+    private string? _applied;
+    private bool _appliedOk;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _isAdmin = (await Auth.GetAuthenticationStateAsync()).User.IsInRole(YanmtRoles.Admin);
+        if (_isAdmin)
+        {
+            _ifMonitors = await Monitors.InterfaceMonitorsAsync();
+            _monitorId = _ifMonitors.FirstOrDefault().Id;
+        }
+    }
+
+    private async Task MonitorAsync(InterfaceRow row)
+    {
+        var name = _ifMonitors.FirstOrDefault(m => m.Id == _monitorId).Name;
+        var r = await Probe.AddInstanceAsync(_monitorId, NodeId, row.Index);
+        _appliedOk = r.Ok;
+        _applied = r.Ok ? $"{name} applied to {row.Name ?? row.Description ?? row.Index}. It's polled from the next cycle." : r.Error;
+    }
 
     private IEnumerable<InterfaceRow> Filtered => (_table?.Rows ?? [])
         .Where(r => !_upOnly || r.OperStatus == 1)

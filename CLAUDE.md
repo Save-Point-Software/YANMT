@@ -71,6 +71,12 @@ everything else comes from user-defined custom monitors (the starter library shi
   `ReadOnlyScanTests` fails if the SNMP collector builds anything but Get/GetNext/GetBulk requests.
 - The map is an SVG Blazor component (`Pages/Maps`). Pan, zoom, and drag are in the hand-written
   `wwwroot/js/map.js` (no libraries, no build step). It reports clicks and final positions to .NET.
+- Custom monitors (`Infrastructure/Monitors`): `MonitorDefinition` and `MonitorAssignment` are
+  audited admin data; `MonitorInstance` and its Custom `StatusSource` (keyed by instance id) are
+  runtime data owned by `StatusEngine`. `MonitorPlanner` turns definitions, assignments, and live tag
+  membership into per-node work. Rule, rate, percent, and dampening logic is pure Core
+  (`Core/Monitors`). Starter monitors live in `StarterLibrary`; it is versioned, so add new ones
+  with a version bump.
 - Status severity is one scale everywhere: Normal, Warning, Critical, Unknown. Rollup rank:
   Critical > Warning > Unknown > Normal.
 

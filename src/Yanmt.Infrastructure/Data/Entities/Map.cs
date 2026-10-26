@@ -54,7 +54,7 @@ public class MapElement : IAudited
     public string? LabelSourceKey { get; set; }
 }
 
-/// <summary>A line between two elements on the same map. Binding a link to a monitor arrives in Phase 4.</summary>
+/// <summary>A line between two elements on the same map, optionally bound to a monitor instance for its color.</summary>
 public class MapLink : IAudited
 {
     public int Id { get; set; }
@@ -65,4 +65,12 @@ public class MapLink : IAudited
     public int ToElementId { get; set; }
     public MapElement To { get; set; } = null!;
     public string? Label { get; set; }
+
+    /// <summary>The monitor instance (normally an interface) whose state colors the link. Null: neutral.</summary>
+    public int? BoundMonitorInstanceId { get; set; }
+
+    public MonitorInstance? BoundMonitorInstance { get; set; }
+
+    /// <summary>Show the bound instance's current value next to the label.</summary>
+    public bool ShowBoundValue { get; set; }
 }

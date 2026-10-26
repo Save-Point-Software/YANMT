@@ -1,12 +1,15 @@
+using System.Globalization;
 using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Yanmt.Core.Connectivity;
 using Yanmt.Core.Monitoring;
+using Yanmt.Core.Monitors;
 using Yanmt.Core.Status;
 using Yanmt.Infrastructure.Collectors.Icmp;
 using Yanmt.Infrastructure.Data;
 using Yanmt.Infrastructure.Data.Entities;
+using Yanmt.Infrastructure.Monitors;
 
 namespace Yanmt.Infrastructure.Monitoring;
 
@@ -123,8 +126,46 @@ public sealed class StatusEngine(
             source.LastUpdateUtc = null; // the first poll after re-enabling isn't a "state change"
         }
 
+        await SyncMonitorsAsync(db, sources, now, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         broadcaster.Publish(await cache.RefreshAsync(db, null, cancellationToken));
+    }
+
+    /// <summary>
+    /// Custom monitors: instances whose assignment, tag membership or monitor is gone are deleted
+    /// with their state and history. Instances that still apply but aren't polled right now (the
+    /// monitor or node is disabled, SNMP is off) keep their history, with their state switched off.
+    /// </summary>
+    private static async Task SyncMonitorsAsync(YanmtDbContext db, List<StatusSource> sources, DateTime now, CancellationToken cancellationToken)
+    {
+        var applicable = await MonitorPlanner.PlanAsync(db, cancellationToken, activeOnly: false);
+        var active = await MonitorPlanner.PlanAsync(db, cancellationToken, activeOnly: true);
+        static bool Covers(Dictionary<int, List<MonitorWork>> plan, MonitorInstance i) =>
+            plan.TryGetValue(i.NodeId, out var works) && works.FirstOrDefault(w => w.Spec.Id == i.DefinitionId) is { } w
+            && (w.AllRows || w.Instances.ContainsKey(i.InstanceKey));
+
+        var instances = await db.MonitorInstances.ToListAsync(cancellationToken);
+        var stale = instances.Where(i => !Covers(applicable, i)).ToList();
+        db.MonitorInstances.RemoveRange(stale);
+        var live = instances.Except(stale).ToDictionary(i => i.Id.ToString(CultureInfo.InvariantCulture));
+
+        foreach (var source in sources.Where(s => s.SourceType == StatusSourceType.Custom))
+        {
+            if (!live.TryGetValue(source.SourceKey, out var instance))
+            {
+                db.StatusSources.Remove(source); // its samples cascade
+            }
+            else if (source.Enabled && !Covers(active, instance))
+            {
+                source.Enabled = false;
+                source.State = Severity.Unknown;
+                source.PendingState = null;
+                source.PendingCount = 0;
+                source.ValueText = null;
+                source.SinceUtc = now;
+                source.LastUpdateUtc = null;
+            }
+        }
     }
 
     internal async Task ApplyAsync(IReadOnlyList<PollResult> batch, CancellationToken cancellationToken)
@@ -184,8 +225,162 @@ public sealed class StatusEngine(
             }
         }
 
+        var monitors = batch.OfType<MonitorPollResult>()
+            .Where(r => nodes.TryGetValue(r.NodeId, out var n) && n.Enabled && n.Snmp)
+            .OrderBy(r => r.TimestampUtc)
+            .ToList();
+        if (monitors.Count > 0)
+        {
+            await ApplyMonitorsAsync(db, monitors, nodes.ToDictionary(n => n.Key, n => n.Value.Hostname), cancellationToken);
+        }
+
         await db.SaveChangesAsync(cancellationToken);
         broadcaster.Publish(await cache.RefreshAsync(db, nodeIds, cancellationToken));
+    }
+
+    /// <summary>
+    /// Applies custom-monitor polls: materialises an instance per polled row (dropping all-rows
+    /// rows that disappeared or no longer pass the row filters), computes each value (rate,
+    /// percent), runs the rules with dampening, and records samples and events.
+    /// </summary>
+    private static async Task ApplyMonitorsAsync(YanmtDbContext db, List<MonitorPollResult> results, Dictionary<int, string> hostnames, CancellationToken cancellationToken)
+    {
+        var nodeIds = results.Select(r => r.NodeId).Distinct().ToList();
+        var defIds = results.SelectMany(r => r.Works.Select(w => w.Spec.Id)).Distinct().ToList();
+        var instances = (await db.MonitorInstances.Where(i => nodeIds.Contains(i.NodeId) && defIds.Contains(i.DefinitionId)).ToListAsync(cancellationToken))
+            .ToDictionary(i => (i.DefinitionId, i.NodeId, i.InstanceKey));
+        var updates = new List<(MonitorPollResult Result, MonitorWork Work, MonitorRow? Row, MonitorInstance Instance)>();
+        var removed = new List<MonitorInstance>();
+
+        foreach (var r in results)
+        {
+            foreach (var w in r.Works)
+            {
+                var existing = instances.Values.Where(i => i.NodeId == r.NodeId && i.DefinitionId == w.Spec.Id).ToList();
+                if (r.Reading?.Works.FirstOrDefault(x => x.DefinitionId == w.Spec.Id) is not { } reading)
+                {
+                    // The poll failed: existing instances go Unknown (quietly; the SNMP source reports the failure).
+                    updates.AddRange(existing.Select(i => (r, w, (MonitorRow?)null, i)));
+                    continue;
+                }
+
+                var keep = reading.Rows
+                    .Where(row => w.Instances.ContainsKey(row.Key) || (w.AllRows && RuleEvaluator.KeepRow(w.Spec, row.Filter, row.Label)))
+                    .ToList();
+                foreach (var row in keep)
+                {
+                    if (!instances.TryGetValue((w.Spec.Id, r.NodeId, row.Key), out var instance))
+                    {
+                        instance = new MonitorInstance { DefinitionId = w.Spec.Id, NodeId = r.NodeId, InstanceKey = row.Key };
+                        db.MonitorInstances.Add(instance);
+                        instances[(w.Spec.Id, r.NodeId, row.Key)] = instance;
+                    }
+
+                    instance.Label = Clip(row.Label ?? w.Instances.GetValueOrDefault(row.Key) ?? instance.Label, 255);
+                    updates.Add((r, w, row, instance));
+                }
+
+                // A complete walk without a row means the row is gone (or filtered out now).
+                if (w.AllRows && !reading.Truncated)
+                {
+                    var kept = keep.Select(k => k.Key).ToHashSet();
+                    removed.AddRange(existing.Where(i => !kept.Contains(i.InstanceKey) && !w.Instances.ContainsKey(i.InstanceKey)));
+                }
+            }
+        }
+
+        if (removed.Count > 0)
+        {
+            var keys = removed.Select(i => i.Id.ToString(CultureInfo.InvariantCulture)).ToList();
+            db.StatusSources.RemoveRange(await db.StatusSources
+                .Where(s => s.SourceType == StatusSourceType.Custom && nodeIds.Contains(s.NodeId) && keys.Contains(s.SourceKey))
+                .ToListAsync(cancellationToken));
+            db.MonitorInstances.RemoveRange(removed);
+        }
+
+        await db.SaveChangesAsync(cancellationToken); // new instances get their ids, which key their sources
+
+        var sourceKeys = updates.Select(u => u.Instance.Id.ToString(CultureInfo.InvariantCulture)).Distinct().ToList();
+        var sources = await db.StatusSources
+            .Where(s => s.SourceType == StatusSourceType.Custom && nodeIds.Contains(s.NodeId) && sourceKeys.Contains(s.SourceKey))
+            .ToDictionaryAsync(s => s.SourceKey, cancellationToken);
+
+        foreach (var (result, work, row, instance) in updates)
+        {
+            var spec = work.Spec;
+            var ts = result.TimestampUtc;
+            var key = instance.Id.ToString(CultureInfo.InvariantCulture);
+            if (!sources.TryGetValue(key, out var source))
+            {
+                source = new StatusSource { NodeId = instance.NodeId, SourceType = StatusSourceType.Custom, SourceKey = key, SinceUtc = ts, Enabled = false };
+                db.StatusSources.Add(source);
+                sources[key] = source;
+            }
+
+            var name = spec.OidMode == Core.Monitors.OidMode.Scalar ? spec.Name : $"{spec.Name} · {instance.Label ?? instance.InstanceKey}";
+            source.DisplayName = Clip(name, 200);
+
+            if (row is null)
+            {
+                if (source.Enabled)
+                {
+                    SetState(db, source, Severity.Unknown, null, $"SNMP {Describe(result.Failure)}", ts, message: null);
+                }
+
+                continue;
+            }
+
+            var baseline = instance.LastRaw is { } raw && instance.LastRawUtc is { } at ? new RateBaseline(raw, at, (uint?)instance.LastUptimeTicks) : null;
+            var computed = MonitorMath.Compute(spec, row.Value, row.Denominator, ts, result.Reading!.UptimeTicks, baseline);
+            if (computed.Baseline is { } b)
+            {
+                (instance.LastRaw, instance.LastRawUtc, instance.LastUptimeTicks) = (b.Raw, b.AtUtc, b.UptimeTicks);
+            }
+
+            Severity candidate;
+            string text;
+            string why;
+            var picked = work.Instances.GetValueOrDefault(row.Key);
+            if (picked is not null && row.Label is not null && !string.Equals(picked.Trim(), row.Label.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                candidate = Severity.Warning;
+                text = $"instance changed: was {picked}, now {row.Label}";
+                why = "the row at this index has a different label; re-pick the instance";
+            }
+            else if (computed.Value is not { } value)
+            {
+                candidate = Severity.Unknown;
+                text = computed.Problem ?? "no value";
+                why = text;
+            }
+            else
+            {
+                var (state, rule) = RuleEvaluator.Evaluate(spec, value);
+                candidate = state;
+                text = MonitorMath.Display(value, spec.ValueMap, spec.Unit);
+                why = rule is { } i
+                    ? $"rule {i + 1} ({MonitorValidation.Symbol(spec.Rules[i].Operator)} {spec.Rules[i].Value}{(spec.Rules[i].Value2 is { } v2 ? " and " + v2 : "")})"
+                    : "no rule matched, default state";
+                if (value.Number is { } n)
+                {
+                    db.MetricSamples.Add(new MetricSample { StatusSource = source, TimestampUtc = ts, Value = (double)n });
+                }
+            }
+
+            var next = candidate == Severity.Unknown
+                ? DampedState.Unknown
+                : MonitorDampening.Apply(new DampedState(source.State, source.PendingState, source.PendingCount), candidate, spec.ConsecutiveMatches);
+
+            // Waiting for a second rate sample is expected, not news.
+            var quiet = !spec.RaiseEvents || (candidate == Severity.Unknown && computed.Baseline is not null);
+            var message = quiet ? null : $"{hostnames.GetValueOrDefault(instance.NodeId)}: {name} {source.State} → {next.State}: {text}, {why}";
+            SetState(db, source, next.State, computed.Value?.Number is { } num ? (double)num : null, text, ts, message);
+            (source.PendingState, source.PendingCount) = (next.PendingState, next.PendingCount);
+            if (candidate == Severity.Unknown && computed.Baseline is not null)
+            {
+                source.LastUpdateUtc = null; // still waiting for data: the first real value isn't a state change
+            }
+        }
     }
 
     private static void ApplyIcmp(YanmtDbContext db, StatusSource source, string hostname, IcmpPollResult result)

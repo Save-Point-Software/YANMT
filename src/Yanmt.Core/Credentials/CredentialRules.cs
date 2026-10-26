@@ -19,9 +19,9 @@ public enum SnmpAuthProtocol
 }
 
 /// <summary>
-/// SNMPv3 USM privacy. DES is deliberately absent. Only AES-128 is verified against IOS-XE: in the
-/// CML lab SHA-256/AES-256 was refused with usmStatsWrongDigests even with re-entered passwords, so
-/// AES-192/256 stay selectable but are flagged as not verified (see docs/SPEC.md).
+/// SNMPv3 USM privacy. DES is deliberately absent. Only AES-128 is verified against IOS-XE, so
+/// AES-192/256 stay selectable but are flagged as not verified. (The one lab failure seen with
+/// AES-256 was YANMT's own key-cache bug, since fixed; see docs/SPEC.md.)
 /// </summary>
 public enum SnmpPrivProtocol
 {

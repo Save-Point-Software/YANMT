@@ -851,3 +851,75 @@ fieldset.thresholds legend {
     font-weight: 600;
     padding: 0 0.3rem;
 }
+
+/* ---- Custom monitors ---- */
+.monitor-edit .card h3 {
+    font-size: 0.95rem;
+    margin: 1rem 0 0.4rem;
+}
+
+.grid.rules td {
+    vertical-align: middle;
+}
+
+.grid.rules input {
+    width: 10rem;
+}
+
+input.narrow,
+.grid.rules input.narrow {
+    width: 7rem;
+}
+
+.test-form,
+.assign-form {
+    flex-wrap: wrap;
+    margin: 0.4rem 0;
+}
+
+.picker {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.5rem;
+    margin: 0.5rem 0;
+    max-height: 18rem;
+    overflow-y: auto;
+    background: var(--surface);
+}
+
+.picker ul {
+    list-style: none;
+    margin: 0.4rem 0 0;
+    padding: 0;
+}
+
+.picker li .btn.link {
+    text-align: left;
+}
+
+.small {
+    font-size: 0.85em;
+}
+
+.monitor-this {
+    margin-bottom: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.sparkline {
+    display: block;
+}
+
+.sparkline polyline {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 1.5;
+}
+
+.map-link.bound .map-link-line {
+    stroke-width: 4;
+}
+
+.map-link.bound.selected .map-link-line {
+    stroke-width: 6;
+}

@@ -1,0 +1,162 @@
+@using Yanmt.Core.Monitors
+@using Yanmt.Infrastructure.Monitors
+@implements IDisposable
+@inject MonitorService Monitors
+@inject MonitorProbeService Probe
+@inject NodeService Nodes
+
+@* Reads the monitor on a node now and shows which rule matches, using the form as it is (unsaved edits included). Read-only. *@
+<section class="card">
+    <h2>Test on node</h2>
+    <div class="inline test-form">
+        <select @bind="_nodeId" aria-label="Node">
+            <option value="0">(choose an SNMP node)</option>
+            @foreach (var n in _nodes)
+            {
+                <option value="@n.Id">@n.Hostname</option>
+            }
+        </select>
+        @if (Model.OidMode == OidMode.Table)
+        {
+            <input class="mono narrow" @bind="_instance" placeholder="instance (blank = every row)" aria-label="Instance" />
+            <button class="btn" @onclick="PickAsync" disabled="@(_busy || _nodeId == 0)">Pick…</button>
+        }
+        <button class="btn primary" @onclick="TestAsync" disabled="@(_busy || _nodeId == 0)">@(_busy ? "Reading…" : "Test")</button>
+    </div>
+    @if (Model.ValueMode == ValueMode.Rate)
+    {
+        <div class="hint">A rate takes two samples @MonitorProbeService.RateGap.TotalSeconds.ToString("0") s apart.</div>
+    }
+
+    @if (_choices is { Count: > 0 })
+    {
+        <div class="picker">
+            <input type="search" class="filter" placeholder="Filter rows" @bind="_choiceFilter" @bind:event="oninput" aria-label="Filter rows" />
+            <ul>
+                @foreach (var c in _choices.Where(c => Matches(c)).Take(200))
+                {
+                    <li><button class="btn link" @onclick="() => { _instance = c.Suffix; _choices = null; }"><span class="mono">@c.Suffix</span> @c.Label</button></li>
+                }
+            </ul>
+        </div>
+    }
+
+    @if (_error is not null)
+    {
+        <p class="error">@_error</p>
+    }
+    else if (_result is { } r)
+    {
+        @if (r.Error is not null)
+        {
+            <p class="error">@r.Error</p>
+        }
+        @if (r.Rows.Count > 0)
+        {
+            <table class="grid">
+                <thead><tr><th class="col-state"></th><th>Instance</th><th>Label</th><th>Value</th><th>Why</th></tr></thead>
+                <tbody>
+                    @foreach (var row in r.Rows)
+                    {
+                        <tr class="@(row.FilteredOut ? "disabled" : null)">
+                            <td class="col-state"><StateDot State="row.State" /></td>
+                            <td class="mono">@(row.Key.Length == 0 ? "(scalar)" : row.Key)</td>
+                            <td>@row.Label</td>
+                            <td class="mono">@row.Value</td>
+                            <td>@row.Explanation</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            @if (r.TotalRows > r.Rows.Count)
+            {
+                <p class="muted">Showing the first @r.Rows.Count of @r.TotalRows rows.</p>
+            }
+        }
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public MonitorEditModel Model { get; set; } = null!;
+    [Parameter] public int? InitialNodeId { get; set; }
+    [Parameter] public string? InitialInstance { get; set; }
+
+    private readonly CancellationTokenSource _cts = new();
+    private List<NodeListItem> _nodes = [];
+    private int _nodeId;
+    private string? _instance;
+    private bool _busy;
+    private string? _error;
+    private MonitorTestResult? _result;
+    private IReadOnlyList<InstanceChoice>? _choices;
+    private string _choiceFilter = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _nodes = (await Nodes.ListAsync()).Where(n => n.Enabled && n.SnmpEnabled).ToList();
+        _nodeId = InitialNodeId is { } id && _nodes.Any(n => n.Id == id) ? id : 0;
+        _instance = InitialInstance;
+    }
+
+    private bool Matches(InstanceChoice c) => string.IsNullOrWhiteSpace(_choiceFilter)
+        || c.Suffix.Contains(_choiceFilter, StringComparison.OrdinalIgnoreCase)
+        || (c.Label?.Contains(_choiceFilter, StringComparison.OrdinalIgnoreCase) ?? false);
+
+    private async Task TestAsync()
+    {
+        _error = null;
+        _result = null;
+        var (spec, errors) = Monitors.BuildSpec(Model);
+        if (errors.Count > 0)
+        {
+            _error = $"Fix the form first: {errors[0].Error}";
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            _result = await Probe.TestAsync(spec, _nodeId, Model.OidMode == OidMode.Table ? _instance : null, MonitorProbeService.RateGap, _cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task PickAsync()
+    {
+        _error = null;
+        var (spec, errors) = Monitors.BuildSpec(Model);
+        if (errors.Any(e => e.Field is nameof(MonitorSpec.Oid) or nameof(MonitorSpec.LabelOid)))
+        {
+            _error = "Set a valid OID (and label column) first.";
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            var (choices, error) = await Probe.ListInstancesAsync(spec, _nodeId, _cts.Token);
+            _choices = choices;
+            _error = error;
+            _choiceFilter = "";
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}

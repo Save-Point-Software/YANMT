@@ -1,0 +1,213 @@
+@using Yanmt.Core.Monitors
+@using Yanmt.Infrastructure.Data.Entities
+@using Yanmt.Infrastructure.Monitors
+@implements IDisposable
+@inject MonitorService Monitors
+@inject MonitorProbeService Probe
+@inject NodeService Nodes
+
+@* Where the monitor is applied: nodes, picked rows of nodes, and tags (live membership). *@
+<section class="card">
+    <h2>Applied to</h2>
+    @if (_assignments.Count == 0)
+    {
+        <p class="muted">Not applied anywhere yet.</p>
+    }
+    else
+    {
+        <table class="grid">
+            <thead><tr><th>Target</th><th>Rows</th><th>Nodes</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var a in _assignments)
+                {
+                    <tr @key="a.Id">
+                        <td>
+                            @if (a.NodeId is { } nodeId)
+                            {
+                                <a href="nodes/@nodeId/view">@a.Target</a>
+                            }
+                            else
+                            {
+                                @a.Target
+                            }
+                        </td>
+                        <td class="mono">@(Model.OidMode == OidMode.Scalar ? "" : a.Rows)</td>
+                        <td>@a.NodeCount</td>
+                        <td class="row-actions"><button class="btn link" @onclick="() => RemoveAsync(a)" disabled="@_busy">Remove</button></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <p class="muted">Removing an assignment deletes the states and history it produced. Nodes without SNMP or a profile aren't polled.</p>
+    }
+
+    <h3>Apply to</h3>
+    <div class="inline">
+        <label class="inline"><input type="radio" name="scope" checked="@(_scope == AssignmentScope.Node)" @onchange="() => _scope = AssignmentScope.Node" /> a node</label>
+        <label class="inline"><input type="radio" name="scope" checked="@(_scope == AssignmentScope.Tag)" @onchange="() => _scope = AssignmentScope.Tag" /> every node with a tag</label>
+    </div>
+    <div class="inline assign-form">
+        @if (_scope == AssignmentScope.Node)
+        {
+            <select @bind="_nodeId" aria-label="Node">
+                <option value="0">(choose a node)</option>
+                @foreach (var n in _nodes)
+                {
+                    <option value="@n.Id">@n.Hostname@(n.SnmpEnabled ? "" : " (SNMP off)")</option>
+                }
+            </select>
+        }
+        else
+        {
+            <select @bind="_tag" aria-label="Tag">
+                <option value="">(choose a tag)</option>
+                @foreach (var t in _tags)
+                {
+                    <option value="@t">@t</option>
+                }
+            </select>
+        }
+        @if (Model.OidMode == OidMode.Table)
+        {
+            <input class="mono narrow" @bind="_instance" placeholder="instance (blank = every row)" aria-label="Instance" />
+            @if (_scope == AssignmentScope.Node)
+            {
+                <button class="btn" @onclick="PickAsync" disabled="@(_busy || _nodeId == 0)">Pick…</button>
+            }
+        }
+        <button class="btn primary" @onclick="AddAsync" disabled="@(_busy || (_scope == AssignmentScope.Node ? _nodeId == 0 : string.IsNullOrEmpty(_tag)))">Apply</button>
+    </div>
+    @if (Model.OidMode == OidMode.Table)
+    {
+        <div class="hint">
+            Blank instance: every row, through the row filters. A picked row keeps its label (e.g. Gi1/0/1); if the row at that
+            index later has a different label, the instance goes Warning so you can re-pick it.
+            @if (_scope == AssignmentScope.Tag)
+            {
+                <span>On a tag, an instance is the same index on every node, which suits fixed indexes (e.g. a CPU) more than interfaces.</span>
+            }
+        </div>
+    }
+
+    @if (_choices is { Count: > 0 })
+    {
+        <div class="picker">
+            <input type="search" class="filter" placeholder="Filter rows" @bind="_choiceFilter" @bind:event="oninput" aria-label="Filter rows" />
+            <ul>
+                @foreach (var c in _choices.Where(Matches).Take(200))
+                {
+                    <li><button class="btn link" @onclick="() => ApplyPickedAsync(c)"><span class="mono">@c.Suffix</span> @c.Label</button></li>
+                }
+            </ul>
+        </div>
+    }
+
+    @if (_error is not null)
+    {
+        <p class="error">@_error</p>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public int DefinitionId { get; set; }
+    [Parameter, EditorRequired] public MonitorEditModel Model { get; set; } = null!;
+
+    private readonly CancellationTokenSource _cts = new();
+    private List<AssignmentView> _assignments = [];
+    private List<NodeListItem> _nodes = [];
+    private List<string> _tags = [];
+    private AssignmentScope _scope = AssignmentScope.Node;
+    private int _nodeId;
+    private string _tag = "";
+    private string? _instance;
+    private string? _error;
+    private bool _busy;
+    private IReadOnlyList<InstanceChoice>? _choices;
+    private string _choiceFilter = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _nodes = await Nodes.ListAsync();
+        _tags = await Monitors.TagNamesAsync();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync() => _assignments = (await Monitors.GetAsync(DefinitionId))?.Assignments ?? [];
+
+    private bool Matches(InstanceChoice c) => string.IsNullOrWhiteSpace(_choiceFilter)
+        || c.Suffix.Contains(_choiceFilter, StringComparison.OrdinalIgnoreCase)
+        || (c.Label?.Contains(_choiceFilter, StringComparison.OrdinalIgnoreCase) ?? false);
+
+    private async Task AddAsync()
+    {
+        _busy = true;
+        _error = null;
+        var instance = Model.OidMode == OidMode.Table ? _instance : null;
+        MonitorResult r;
+        if (_scope == AssignmentScope.Node && !string.IsNullOrWhiteSpace(instance))
+        {
+            r = await Probe.AddInstanceAsync(DefinitionId, _nodeId, instance.Trim()); // reads the row's label for the check
+        }
+        else
+        {
+            r = await Monitors.AddAssignmentAsync(DefinitionId, _scope, _scope == AssignmentScope.Node ? _nodeId : null,
+                _scope == AssignmentScope.Tag ? _tag : null, instance, null);
+        }
+
+        _error = r.Ok ? null : r.Error;
+        if (r.Ok)
+        {
+            _instance = null;
+        }
+
+        await LoadAsync();
+        _busy = false;
+    }
+
+    private async Task ApplyPickedAsync(InstanceChoice c)
+    {
+        _choices = null;
+        _instance = c.Suffix;
+        await AddAsync();
+    }
+
+    private async Task PickAsync()
+    {
+        _error = null;
+        if (await Monitors.GetSpecAsync(DefinitionId) is not { } spec)
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            var (choices, error) = await Probe.ListInstancesAsync(spec, _nodeId, _cts.Token);
+            _choices = choices;
+            _error = error;
+            _choiceFilter = "";
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task RemoveAsync(AssignmentView a)
+    {
+        _busy = true;
+        var r = await Monitors.RemoveAssignmentAsync(a.Id);
+        _error = r.Ok ? null : r.Error;
+        await LoadAsync();
+        _busy = false;
+    }
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}

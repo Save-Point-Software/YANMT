@@ -8,7 +8,7 @@ nodes whose colors come from ICMP, SNMPv3, and user-defined monitors, with drill
 > to an allowlist of `show` commands enforced in code and by tests; SNMP is GET/GETNEXT/GETBULK/WALK
 > only, with no SET code path at all.
 
-**Status:** under development, phase 3 of 6 (inventory, credentials, ICMP and SNMPv3 default-stats polling, the live map, and the node detail page). See
+**Status:** under development, phase 4 of 6 (inventory, credentials, ICMP, SNMPv3 default stats, custom monitors, the live map with link binding, and the node detail page). See
 [`docs/SPEC.md`](docs/SPEC.md) for the full v1 scope.
 
 ## Requirements
@@ -73,8 +73,7 @@ Engine discovery is cached per device, so a poll doesn't pay an extra round trip
   CPU or memory source, rather than sitting gray.
 - **System info** (sysDescr, sysName, sysLocation, sysContact) is shown on the node page.
 
-Nothing else is hard-coded: interface, BGP, tunnel, and other monitoring comes from custom monitors
-in phase 4.
+Nothing else is hard-coded: interface, BGP, tunnel, and other monitoring comes from custom monitors.
 
 ### Node page
 
@@ -93,6 +92,88 @@ Click a node on the map or in the list. Its page has these tabs:
 - **Config backups** (phase 5).
 
 Viewers and admins can both use the Interfaces and SNMP query tabs, since both are read-only.
+Admins also get **Monitor this** on both tabs.
+
+## Custom monitors
+
+A custom monitor polls any OID and turns its value into a state. Create one under **Monitors**
+(admins). The same monitor is also the template: apply it to as many nodes, rows, or tags as you
+like, and editing it changes all of them.
+
+### What to poll
+
+- **Scalar** OIDs include their instance, e.g. `sysUpTime.0`.
+- **Table columns** are written without an index, e.g. `ifOperStatus`. When you apply one, you
+  choose a single row (e.g. interface 3) or every row.
+- Names from the built-in table work anywhere an OID is asked for, and are stored as numbers.
+- A **row label column** (e.g. `ifDescr`, `ifAlias`, `ifName`) names each row. It's used by the
+  picker and in state names, and to notice renumbering. If the row at a picked index later carries a
+  different label, the instance goes Warning ("instance changed: was Tunnel0, now Gi4") until you
+  re-pick it.
+
+### Value
+
+- **Raw** uses the value as polled; **rate per second** uses the change between polls of a
+  counter. The rate handles Counter32 wrap, treats a Counter64 going down as a reset, and uses the
+  agent's sysUpTime for timing. The first poll of a rate is Unknown ("waiting for a second sample").
+- **Multiplied by** scales the value (e.g. 8 for octets to bits).
+- **As a percentage of** a second OID (read from the same row) times its own multiplier, e.g.
+  interface utilization = rate(ifHCInOctets) × 8 ÷ (ifHighSpeed × 1000000) × 100.
+- **Value map:** `1=up, 2=down` shows labels instead of numbers.
+
+### State rules
+
+- Rules are ordered, and the first match wins. Operators: `=`, `≠`, `>`, `≥`, `<`, `≤`,
+  `between`, `contains`, `regex`.
+- Numeric operators compare the number. `=` and `≠` also accept a mapped label (`= established`).
+- `contains` and `regex` match the mapped label, or the raw text when there's no map.
+- When no rule matches, the default state applies. No value at all (missing object, first rate
+  sample) is always Unknown.
+- **Consecutive matches** dampens flapping: a new state must hold for that many polls in a row.
+- **Interval** overrides the SNMP default for this monitor. **Log state changes** controls events.
+
+### Applying a monitor
+
+- **Node:** one node, optionally at one picked row ("Pick…" walks the label column on that node).
+- **Tag:** every node carrying the tag, now or later (live membership). Usually with every row.
+- **Row filters** (table monitors applied to every row): keep rows where a column passes a test
+  (e.g. `ifAdminStatus = 1`), and/or whose label matches a regex (e.g. `^(Gi|Te)`, or `^(?!Null)` to
+  skip Null0). A row you picked is always polled.
+- **Test on node** in the editor reads the OID now with your unsaved settings, and shows each
+  row's value and the rule it matches. Rows the filters would skip are shown greyed.
+- **Removing** an assignment, or untagging a node, deletes that monitor's states and history there.
+  Disabling a monitor or a node only switches the states off.
+
+Each node's due monitors are read together: picked rows and scalars in batched GETs, and every
+all-rows column in one GETBULK walk. Monitors with the same interval on a node share a poll.
+
+### Starter library (shipped disabled)
+
+| Monitor | What it does |
+|---|---|
+| Interface oper status | `ifOperStatus` of admin-up interfaces. Down is Critical. |
+| Interface utilization in % / out % | Rate of `ifHC{In,Out}Octets` × 8 as a % of `ifHighSpeed` × 10⁶. Warning 75%, Critical 90%. |
+| Interface input errors per second | Rate of `ifInErrors`. Any errors are Warning; 10/s or more is Critical. |
+| BGP peer state | `bgpPeerState` of admin-started peers. Anything but established is Critical. |
+| CPU 1-minute average | `cpmCPUTotal1minRev` every 60 s. Warning 80%, Critical 90%. |
+
+The interface examples skip Null interfaces. Enable one and apply it, or **Copy** it and change
+the copy. They're seeded once, so a deleted example stays deleted.
+
+### Examples
+
+- **Tunnel up:** `ifOperStatus` (table), label `ifDescr`, map `1=up, 2=down`, rules `= up -> Normal`,
+  default Critical. Apply it to the node and pick `Tunnel0`.
+- **Interface utilization on a link:** apply "Interface utilization in %" to the hub's uplink. Then,
+  on the map, select the link and choose it under **Color from monitor**, and tick **show its value**.
+- **Errors anywhere in the core:** enable "Interface input errors per second" and apply it to the
+  tag `core`.
+
+### Map links
+
+In edit mode, select a link to bind it to a monitor instance on either end node. The line then
+takes that instance's state color; unbound links stay neutral gray. It can also show the current
+value next to its label.
 
 ### ICMP polling
 

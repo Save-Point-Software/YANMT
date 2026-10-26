@@ -3,6 +3,7 @@
 @implements IDisposable
 @inject SnmpQueryService Query
 @inject IOidNameResolver Names
+@inject AuthenticationStateProvider Auth
 
 @* Read-only SNMP query tool (GET / GETNEXT / WALK). There is no SET anywhere in YANMT. *@
 <section class="card">
@@ -52,7 +53,7 @@
                 {
                     <div class="table-wrap">
                         <table class="grid">
-                            <thead><tr><th>OID</th><th>Name</th><th>Type</th><th>Value</th></tr></thead>
+                            <thead><tr><th>OID</th><th>Name</th><th>Type</th><th>Value</th>@if (_isAdmin) { <th></th> }</tr></thead>
                             <tbody>
                                 @foreach (var row in r.Rows)
                                 {
@@ -61,13 +62,16 @@
                                         <td class="mono nowrap">@row.Name</td>
                                         <td class="nowrap">@row.Type</td>
                                         <td class="mono wrap">@row.Value</td>
+                                        @if (_isAdmin)
+                                        {
+                                            <td class="nowrap"><a href="@MonitorLink(row)">Monitor this</a></td>
+                                        }
                                     </tr>
                                 }
                             </tbody>
                         </table>
                     </div>
                 }
-                <p class="muted">Turning a result into a custom monitor arrives in Phase 4.</p>
             }
         }
     }
@@ -82,6 +86,27 @@
     private string _oid = "sysDescr.0";
     private SnmpQueryResult? _result;
     private bool _busy;
+    private bool _isAdmin;
+
+    protected override async Task OnInitializedAsync() =>
+        _isAdmin = (await Auth.GetAuthenticationStateAsync()).User.IsInRole(YanmtRoles.Admin);
+
+    /// <summary>
+    /// Opens a new monitor for this object: a row of a known table column becomes a table monitor
+    /// on that row (e.g. ifOperStatus.3); anything else becomes a scalar monitor of the full OID.
+    /// </summary>
+    private string MonitorLink(SnmpQueryRow row)
+    {
+        string oid = row.Oid, instance = "";
+        if (row.Name is { } name && name.IndexOf('.') is var dot and > 0 && name[dot..] != ".0"
+            && Names.TryParse(name[..dot], out var column) && row.Oid.StartsWith(column + ".", StringComparison.Ordinal))
+        {
+            oid = column;
+            instance = row.Oid[(column.Length + 1)..];
+        }
+
+        return $"monitors/new?oid={Uri.EscapeDataString(oid)}&instance={Uri.EscapeDataString(instance)}&node={NodeId}";
+    }
 
     private async Task RunAsync()
     {

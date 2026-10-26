@@ -24,6 +24,10 @@ public class StatusSource
     public Node Node { get; set; } = null!;
     public StatusSourceType SourceType { get; set; }
     public string SourceKey { get; set; } = "";
+
+    /// <summary>Readable name for custom monitor sources, e.g. "Interface oper status · Gi1". Null for built-in sources.</summary>
+    public string? DisplayName { get; set; }
+
     public bool Enabled { get; set; } = true;
     public Severity State { get; set; } = Severity.Unknown;
     public double? Value { get; set; }

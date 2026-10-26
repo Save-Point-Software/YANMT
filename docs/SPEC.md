@@ -53,7 +53,7 @@ Additional approved packages: `Microsoft.Extensions.Hosting.WindowsServices` (fo
 ### SNMPv3 lab results (Phase 1b, CML)
 
 - **SHA-256/AES-128:** passes on Hub-R2. This is the supported v1 pairing.
-- **SHA-256/AES-256:** failed on Hub-R2 with `usmStatsWrongDigests`, even with identical, re-entered passwords. **Decision: not pursued for v1.** New profiles default to SHA-256/AES-128, the UI marks AES-192/256 "not verified on IOS-XE", and the AES-256 integration test is skipped with this reason.
+- **SHA-256/AES-256:** one lab run failed on Hub-R2 with `usmStatsWrongDigests`. The cause was YANMT's own key-cache bug (see the caveat below), not IOS-XE. **Decision: not pursued for v1.** New profiles default to SHA-256/AES-128, the UI marks AES-192/256 "not verified on IOS-XE", and the AES-256 integration test is skipped with this reason.
   - *Caveat:* after that run, a YANMT bug was found that produces exactly this symptom. The response HMAC check zeroed SharpSnmpLib's process-wide localized-key cache, so the next request with the same auth password to the same engine was signed with a zero key. It's fixed and regression-tested. The failure therefore isn't evidence against IOS-XE, but AES-256 is still unverified. Re-testing it is optional; un-skip the test to run it.
 - **SHA-1/AES-128 (legacy):** for devices without SHA-2 auth, such as ISP-HUB in the lab. The response HMAC check covers HMAC-SHA-96, with unit tests anchored on the RFC 3414 test vector.
 - **Wrong privacy password:** both Hub-R2 (SHA-256/AES-128) and ISP-HUB (SHA-1/AES-128) drop the request silently. Engine discovery succeeds, then the real request times out; neither device sends a `usmStatsDecryptionErrors` report.
@@ -110,6 +110,19 @@ Phase 3 decisions:
 - **Live tools:** the interfaces tab and the SNMP query tool are open to **viewers and admins**. Both are read-only and bounded; a walk stops at 2,000 rows.
 - **CPU** is the busiest CPU's `cpmCPUTotal5minRev`. **Memory** is the `Processor` pool, preferring HC counters.
 - **Failed polls:** one event on the Uptime source. CPU and memory go Unknown quietly. A device lacking the CPU or memory MIB has no such source, rather than staying Unknown.
+
+Phase 4 decisions (custom monitors):
+
+- **One concept, many targets.** A monitor definition is the template. Assignments apply it to a node, to a node plus a picked row, or to a tag. Editing a definition changes every place it's applied. Copy makes an independent duplicate. The starter library is disabled definitions with no assignments.
+- **OID kind:** a definition's OID is a **scalar** or a **table column**. One row or all rows is chosen **per assignment**, which covers the three OID modes above with one definition.
+- **Tags are live membership.** A node is monitored while it carries the tag.
+- **All-rows filters:** optionally keep rows where a column passes a test (e.g. `ifAdminStatus = 1`), and/or whose label matches a regex. The starter interface monitors ship with the admin-up filter and skip Null interfaces.
+- **Rule editor:** ordered rows with a default state, plus a **Test on node** panel that evaluates the unsaved form against a device.
+- **Instances:** the index is stored with its label at pick time. A different label at poll time makes the instance Warning ("instance changed").
+- **Percentages:** (numerator, raw or rate) × scale ÷ (denominator × scale) × 100. Utilization in and out are separate starter monitors.
+- **Value maps:** numeric operators use the number. `=` and `≠` accept mapped labels. `contains` and `regex` match the label.
+- **Links** take the bound instance's state color, and can show its value.
+- **History:** removing an assignment, or a tag from a node, deletes that monitor's history there. Disabling a monitor or node keeps it.
 
 ### SNMPv3: custom monitors (the core feature)
 

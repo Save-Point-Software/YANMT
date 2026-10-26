@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Yanmt.Core.Credentials;
 using Yanmt.Core.Inventory;
 using Yanmt.Core.Maps;
+using Yanmt.Core.Monitors;
 using Yanmt.Core.Status;
 using Yanmt.Infrastructure.Data.Entities;
 
@@ -21,6 +22,9 @@ public class YanmtDbContext(DbContextOptions<YanmtDbContext> options) : DbContex
     public DbSet<MetricSample> MetricSamples => Set<MetricSample>();
     public DbSet<NodeSystemInfo> NodeSystemInfo => Set<NodeSystemInfo>();
     public DbSet<Map> Maps => Set<Map>();
+    public DbSet<MonitorDefinition> MonitorDefinitions => Set<MonitorDefinition>();
+    public DbSet<MonitorAssignment> MonitorAssignments => Set<MonitorAssignment>();
+    public DbSet<MonitorInstance> MonitorInstances => Set<MonitorInstance>();
     public DbSet<MapElement> MapElements => Set<MapElement>();
     public DbSet<MapLink> MapLinks => Set<MapLink>();
 
@@ -37,6 +41,10 @@ public class YanmtDbContext(DbContextOptions<YanmtDbContext> options) : DbContex
         configurationBuilder.Properties<SnmpAuthProtocol>().HaveConversion<string>().HaveMaxLength(16);
         configurationBuilder.Properties<SnmpPrivProtocol>().HaveConversion<string>().HaveMaxLength(16);
         configurationBuilder.Properties<MapElementKind>().HaveConversion<string>().HaveMaxLength(16);
+        configurationBuilder.Properties<OidMode>().HaveConversion<string>().HaveMaxLength(16);
+        configurationBuilder.Properties<ValueMode>().HaveConversion<string>().HaveMaxLength(16);
+        configurationBuilder.Properties<RuleOperator>().HaveConversion<string>().HaveMaxLength(16);
+        configurationBuilder.Properties<AssignmentScope>().HaveConversion<string>().HaveMaxLength(16);
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -80,6 +88,7 @@ public class YanmtDbContext(DbContextOptions<YanmtDbContext> options) : DbContex
         modelBuilder.Entity<StatusSource>(e =>
         {
             e.Property(s => s.SourceKey).HasMaxLength(64);
+            e.Property(s => s.DisplayName).HasMaxLength(200);
             e.HasIndex(s => new { s.NodeId, s.SourceType, s.SourceKey }).IsUnique();
             e.HasOne(s => s.Node).WithMany().HasForeignKey(s => s.NodeId).OnDelete(DeleteBehavior.Cascade);
         });
@@ -151,6 +160,43 @@ public class YanmtDbContext(DbContextOptions<YanmtDbContext> options) : DbContex
             e.HasOne(x => x.From).WithMany().HasForeignKey(x => x.FromElementId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.To).WithMany().HasForeignKey(x => x.ToElementId).OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(x => new { x.MapId, x.FromElementId, x.ToElementId }).IsUnique();
+            e.HasOne(x => x.BoundMonitorInstance).WithMany().HasForeignKey(x => x.BoundMonitorInstanceId).OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<MonitorDefinition>(e =>
+        {
+            e.Property(x => x.Name).HasMaxLength(MonitorValidation.MaxNameLength).UseCollation("NOCASE");
+            e.HasIndex(x => x.Name).IsUnique();
+            e.Property(x => x.Description).HasMaxLength(MonitorValidation.MaxDescriptionLength);
+            e.Property(x => x.StarterKey).HasMaxLength(64);
+            e.Property(x => x.Oid).HasMaxLength(MonitorValidation.MaxOidLength);
+            e.Property(x => x.LabelOid).HasMaxLength(MonitorValidation.MaxOidLength);
+            e.Property(x => x.DenominatorOid).HasMaxLength(MonitorValidation.MaxOidLength);
+            e.Property(x => x.FilterOid).HasMaxLength(MonitorValidation.MaxOidLength);
+            e.Property(x => x.FilterValue).HasMaxLength(MonitorValidation.MaxRuleValueLength);
+            e.Property(x => x.LabelRegex).HasMaxLength(MonitorValidation.MaxRegexLength);
+            e.Property(x => x.Unit).HasMaxLength(MonitorValidation.MaxUnitLength);
+            e.Property(x => x.ValueMap).HasMaxLength(4000);
+            e.Property(x => x.RulesJson).HasMaxLength(16000);
+        });
+
+        modelBuilder.Entity<MonitorAssignment>(e =>
+        {
+            e.Property(x => x.TagName).HasMaxLength(NodeRules.MaxTagLength).UseCollation("NOCASE");
+            e.Property(x => x.InstanceSuffix).HasMaxLength(MonitorValidation.MaxOidLength);
+            e.Property(x => x.InstanceLabel).HasMaxLength(255);
+            e.HasOne(x => x.Definition).WithMany(d => d.Assignments).HasForeignKey(x => x.DefinitionId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Node).WithMany().HasForeignKey(x => x.NodeId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.DefinitionId, x.Scope, x.NodeId, x.TagName, x.InstanceSuffix });
+        });
+
+        modelBuilder.Entity<MonitorInstance>(e =>
+        {
+            e.Property(x => x.InstanceKey).HasMaxLength(MonitorValidation.MaxOidLength);
+            e.Property(x => x.Label).HasMaxLength(255);
+            e.HasIndex(x => new { x.DefinitionId, x.NodeId, x.InstanceKey }).IsUnique();
+            e.HasOne(x => x.Definition).WithMany().HasForeignKey(x => x.DefinitionId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Node).WithMany().HasForeignKey(x => x.NodeId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<Setting>(e =>

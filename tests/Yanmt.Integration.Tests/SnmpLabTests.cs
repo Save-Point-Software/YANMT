@@ -21,9 +21,8 @@ public class SnmpLabTests
     private const string SysUpTime = "1.3.6.1.2.1.1.3.0";
 
     private const string Aes256NotSupported =
-        "SHA-256/AES-256 is not supported in v1: in the CML lab IOS-XE (Hub-R2) answered usmStatsWrongDigests " +
-        "even with identical, re-entered passwords, while SHA-256/AES-128 passed. See docs/SPEC.md. " +
-        "Remove this Skip to re-run the experiment.";
+        "SHA-256/AES-256 is not verified or pursued in v1. The one lab failure (usmStatsWrongDigests on Hub-R2) " +
+        "was caused by YANMT's own key-cache bug, since fixed. See docs/SPEC.md. Remove this Skip to verify it.";
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 

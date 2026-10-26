@@ -12,6 +12,7 @@ using Yanmt.Infrastructure.Data;
 using Yanmt.Infrastructure.Inventory;
 using Yanmt.Infrastructure.Maps;
 using Yanmt.Infrastructure.Monitoring;
+using Yanmt.Infrastructure.Monitors;
 using Yanmt.Infrastructure.Security;
 using Yanmt.Infrastructure.Settings;
 
@@ -58,6 +59,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<InterfaceService>();
         services.AddScoped<SnmpQueryService>();
         services.AddScoped<NodeDetailService>();
+        services.AddScoped<MonitorService>();
+        services.AddScoped<MonitorProbeService>();
+        services.AddSingleton<MonitorCollector>();
         return services;
     }
 
@@ -78,6 +82,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<DefaultStatsCollector>();
         services.AddHostedService<IcmpPoller>();
         services.AddHostedService<SnmpPoller>();
+        services.AddHostedService<MonitorPoller>();
         return services;
     }
 }
