@@ -26,7 +26,7 @@ jobs:
 
       # Integration tests skip themselves: there is no tests/lab.json in CI.
       - name: Test
-        run: dotnet test --no-build -c Release --report-trx --results-directory TestResults
+        run: dotnet test --no-build -c Release --report-xunit-trx --results-directory TestResults
 
       - name: Upload test results
         if: always()
@@ -45,7 +45,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Free for personal repositories. An organization-owned repo needs a GITLEAKS_LICENSE secret.
-      - uses: gitleaks/gitleaks-action@v2
+      # The CLI needs no license (gitleaks-action does for organization-owned repos).
+      - name: Run gitleaks
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_VERSION: "8.28.0"
+        run: |
+          curl -sSfL -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf gitleaks.tar.gz gitleaks
+          ./gitleaks detect --source . --redact --verbose
