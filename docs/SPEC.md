@@ -177,6 +177,15 @@ Opens when a node is clicked on the map or in a list. It shows:
 - Download a single version, or a node's full history as a zip.
 - A failed backup sets that source to Warning, and a config change creates an event.
 
+Phase 5 decisions (config backups):
+
+- **Encrypted at rest:** the raw config of every version is encrypted with DPAPI (machine scope), like credentials. Masking happens at display time only; the stored text is never masked or altered.
+- **Masking:** viewers always see masked text. Admins can reveal secrets, and each reveal is written to the audit log.
+- **Zip download:** a node's history zip is **masked by default**. An admin can opt in to including secrets, and that choice is written to the audit log. Viewers always get the masked zip.
+- **Rules are global in v1:** the normalization regex list and the masking rules are global settings, not per node.
+- **Retention:** all versions are kept. Version retention is a Phase 6 item.
+- **Fixtures:** test configs are invented or fully sanitized (RFC 5737 addresses, made-up hostnames and secrets). Never a real device config; the repo is public.
+
 ### Events (in-app only)
 
 - One event log covering every state change: ICMP, default stats, custom monitors, reboots, backups, and config changes.
