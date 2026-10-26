@@ -47,8 +47,10 @@ public class ConfigNormalizerTests
     [Fact]
     public void Line_endings_and_trailing_whitespace_are_ignored()
     {
-        var crlf = ConfigFixtures.Router.Replace("\n", "  \r\n");
-        Assert.Equal(ConfigNormalizer.Normalize(ConfigFixtures.Router), ConfigNormalizer.Normalize(crlf));
+        // The fixture may have CRLF endings on Windows checkouts, so start from LF.
+        var lf = ConfigFixtures.Router.Replace("\r\n", "\n");
+        var crlf = lf.Replace("\n", "  \r\n");
+        Assert.Equal(ConfigNormalizer.Normalize(lf), ConfigNormalizer.Normalize(crlf));
     }
 
     [Fact]
