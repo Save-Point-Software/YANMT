@@ -6,6 +6,7 @@ using Yanmt.Core.Oids;
 using Yanmt.Infrastructure.Collectors.Icmp;
 using Yanmt.Infrastructure.Collectors.Snmp;
 using Yanmt.Infrastructure.Collectors.Ssh;
+using Yanmt.Infrastructure.ConfigBackups;
 using Yanmt.Infrastructure.Connectivity;
 using Yanmt.Infrastructure.Credentials;
 using Yanmt.Infrastructure.Data;
@@ -49,6 +50,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISnmpReader, SnmpV3Reader>();
         services.AddSingleton<ReadOnlySshCollector>();
         services.AddScoped<ConnectionTester>();
+        services.AddScoped<ConfigBackupService>();
 
         services.AddSingleton<InventoryChangeSignal>();
         services.AddSingleton<StatusCache>();

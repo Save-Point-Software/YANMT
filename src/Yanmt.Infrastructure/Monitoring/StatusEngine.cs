@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Yanmt.Core.ConfigBackups;
 using Yanmt.Core.Connectivity;
 using Yanmt.Core.Monitoring;
 using Yanmt.Core.Monitors;
@@ -29,6 +30,13 @@ public sealed record SnmpPollResult(
     DefaultStatsReading? Reading,
     FailureCategory? Failure = null,
     string? Error = null)
+    : PollResult(NodeId, TimestampUtc);
+
+/// <summary>
+/// A finished config backup attempt. <see cref="Kind"/> is set when the config was fetched (and, if
+/// it changed, stored); <see cref="Error"/> is set when the attempt failed.
+/// </summary>
+public sealed record BackupPollResult(int NodeId, DateTime TimestampUtc, ConfigChangeKind? Kind, string? Error = null)
     : PollResult(NodeId, TimestampUtc);
 
 /// <summary>
@@ -212,6 +220,9 @@ public sealed class StatusEngine(
                 case IcmpPollResult icmp when node.IcmpEnabled:
                     ApplyIcmp(db, Source(node.Id, StatusSourceType.Icmp, icmp.TimestampUtc, true), node.Hostname, icmp);
                     break;
+                case BackupPollResult backup:
+                    ApplyBackup(db, Source(node.Id, StatusSourceType.Backup, backup.TimestampUtc, true), node.Hostname, backup);
+                    break;
                 case SnmpPollResult snmp when node.Snmp:
                     if (!infos.TryGetValue(node.Id, out var info))
                     {
@@ -380,6 +391,32 @@ public sealed class StatusEngine(
             {
                 source.LastUpdateUtc = null; // still waiting for data: the first real value isn't a state change
             }
+        }
+    }
+
+    /// <summary>
+    /// Backup state: a failed pull is Warning, a successful one Normal. A config change also gets its
+    /// own event (Normal to Normal), since it is worth seeing even though the state doesn't move.
+    /// </summary>
+    private static void ApplyBackup(YanmtDbContext db, StatusSource source, string hostname, BackupPollResult result)
+    {
+        var evaluation = result.Kind is { } kind
+            ? ConfigBackupEvaluator.EvaluateSuccess(kind)
+            : ConfigBackupEvaluator.EvaluateFailure(result.Error ?? "");
+        SetState(db, source, evaluation.State, null, evaluation.ValueText, result.TimestampUtc,
+            $"{hostname}: config backup {source.State} → {evaluation.State}: {evaluation.Reason}");
+
+        if (result.Kind == ConfigChangeKind.Changed)
+        {
+            db.Events.Add(new Event
+            {
+                TimestampUtc = result.TimestampUtc,
+                NodeId = result.NodeId,
+                Source = StatusSourceType.Backup,
+                OldState = Severity.Normal,
+                NewState = Severity.Normal,
+                Message = Truncate($"{hostname}: running-config changed (new version stored)", 1000),
+            });
         }
     }
 

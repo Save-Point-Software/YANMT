@@ -27,6 +27,7 @@ public class YanmtDbContext(DbContextOptions<YanmtDbContext> options) : DbContex
     public DbSet<MonitorInstance> MonitorInstances => Set<MonitorInstance>();
     public DbSet<MapElement> MapElements => Set<MapElement>();
     public DbSet<MapLink> MapLinks => Set<MapLink>();
+    public DbSet<ConfigVersion> ConfigVersions => Set<ConfigVersion>();
 
     /// <summary>Audit rows captured by <see cref="AuditInterceptor"/> between SavingChanges and SavedChanges.</summary>
     internal List<AuditInterceptor.PendingAudit> PendingAudits { get; } = [];
@@ -91,6 +92,13 @@ public class YanmtDbContext(DbContextOptions<YanmtDbContext> options) : DbContex
             e.Property(s => s.DisplayName).HasMaxLength(200);
             e.HasIndex(s => new { s.NodeId, s.SourceType, s.SourceKey }).IsUnique();
             e.HasOne(s => s.Node).WithMany().HasForeignKey(s => s.NodeId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ConfigVersion>(e =>
+        {
+            e.Property(v => v.ContentHash).HasMaxLength(64);
+            e.HasIndex(v => new { v.NodeId, v.CapturedUtc });
+            e.HasOne(v => v.Node).WithMany().HasForeignKey(v => v.NodeId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<Event>(e =>
