@@ -25,7 +25,7 @@ public class ConfigBackupPollerTests
         int? profileId = null;
         if (withProfile)
         {
-            var profile = new CredentialProfile { Name = $"ssh-{nodeId}", Kind = CredentialKind.Ssh, Username = "lab", Port = 22, ProtectedSecrets = [1], CreatedUtc = test.Clock.GetUtcNow().UtcDateTime, UpdatedUtc = test.Clock.GetUtcNow().UtcDateTime };
+            var profile = new CredentialProfile { Name = $"ssh-{nodeId}-{Guid.NewGuid():N}", Kind = CredentialKind.Ssh, Username = "lab", Port = 22, ProtectedSecrets = [1], CreatedUtc = test.Clock.GetUtcNow().UtcDateTime, UpdatedUtc = test.Clock.GetUtcNow().UtcDateTime };
             db.CredentialProfiles.Add(profile);
             await db.SaveChangesAsync(Ct);
             profileId = profile.Id;
