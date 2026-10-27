@@ -98,8 +98,15 @@ public sealed class StatusEngine(
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var now = clock.GetUtcNow().UtcDateTime;
         var nodes = await db.Nodes.AsNoTracking()
-            .Select(n => new { n.Id, Icmp = n.Enabled && n.IcmpEnabled, Snmp = n.Enabled && n.SnmpEnabled && n.SnmpProfileId != null })
+            .Select(n => new
+            {
+                n.Id,
+                Icmp = n.Enabled && n.IcmpEnabled,
+                Snmp = n.Enabled && n.SnmpEnabled && n.SnmpProfileId != null,
+                Backup = n.Enabled && n.SshEnabled && n.SshProfileId != null,
+            })
             .ToDictionaryAsync(n => n.Id, cancellationToken);
+        var backupsOn = await ConfigBackupsEnabledAsync(db, cancellationToken);
         var sources = await db.StatusSources.ToListAsync(cancellationToken);
 
         foreach (var source in sources)
@@ -109,6 +116,10 @@ public sealed class StatusEngine(
             if (source.SourceType == StatusSourceType.Icmp)
             {
                 wanted = node?.Icmp ?? false;
+            }
+            else if (source.SourceType == StatusSourceType.Backup && source.Enabled && !(backupsOn && node?.Backup == true))
+            {
+                wanted = false; // only switched off here, so a stale Warning can't colour a node that is no longer backed up
             }
             else if (SnmpSources.Contains(source.SourceType) && source.Enabled && node?.Snmp != true)
             {
@@ -137,6 +148,27 @@ public sealed class StatusEngine(
         await SyncMonitorsAsync(db, sources, now, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         broadcaster.Publish(await cache.RefreshAsync(db, null, cancellationToken));
+    }
+
+    /// <summary>The global config backup switch, read straight from the settings row (default on).</summary>
+    private static async Task<bool> ConfigBackupsEnabledAsync(YanmtDbContext db, CancellationToken cancellationToken)
+    {
+        var key = Settings.SettingKeys.ConfigBackup.Key;
+        var json = await db.Settings.AsNoTracking().Where(x => x.Key == key).Select(x => x.JsonValue).FirstOrDefaultAsync(cancellationToken);
+        if (json is null)
+        {
+            return Settings.SettingKeys.ConfigBackup.Default.Enabled;
+        }
+
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<ConfigBackupSettings>(json, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))?.Enabled
+                ?? Settings.SettingKeys.ConfigBackup.Default.Enabled;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return Settings.SettingKeys.ConfigBackup.Default.Enabled;
+        }
     }
 
     /// <summary>
@@ -405,6 +437,11 @@ public sealed class StatusEngine(
             : ConfigBackupEvaluator.EvaluateFailure(result.Error ?? "");
         SetState(db, source, evaluation.State, null, evaluation.ValueText, result.TimestampUtc,
             $"{hostname}: config backup {source.State} → {evaluation.State}: {evaluation.Reason}");
+
+        if (result.Kind is not null)
+        {
+            source.LastVerifiedUtc = result.TimestampUtc; // manual and scheduled successes both verify
+        }
 
         if (result.Kind == ConfigChangeKind.Changed)
         {

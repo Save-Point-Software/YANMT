@@ -761,6 +761,9 @@ namespace Yanmt.Infrastructure.Data.Migrations
                     b.Property<DateTime?>("LastUpdateUtc")
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime?>("LastVerifiedUtc")
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("NodeId")
                         .HasColumnType("INTEGER");
 

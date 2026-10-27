@@ -1,3 +1,4 @@
+using Yanmt.Core.ConfigBackups;
 using Yanmt.Core.Connectivity;
 using Yanmt.Core.Ssh;
 using Yanmt.Infrastructure.Collectors.Ssh;
@@ -71,6 +72,40 @@ public class SshLabTests
 
         TestContext.Current.TestOutputHelper?.WriteLine($"{node.Hostname}: {ex.Category}: {ex.Message}");
         Assert.Equal(FailureCategory.AuthFailure, ex.Category);
+    }
+
+    [Fact]
+    public async Task Ssh_4_running_config_is_complete_and_normalizes_to_a_stable_hash()
+    {
+        var (lab, ssh) = Require();
+        var collector = new ReadOnlySshCollector();
+        var failures = new List<string>();
+
+        foreach (var node in lab.Nodes)
+        {
+            // Two pulls back to back: the volatile header lines must not make the hashes differ.
+            var first = await collector.RunAsync(Target(node, ssh, pinned: null), [CommandAllowlist.ShowRunningConfig], Ct);
+            var second = await collector.RunAsync(Target(node, ssh, pinned: first.HostKey.Fingerprint), [CommandAllowlist.ShowRunningConfig], Ct);
+            var a = first.Outputs[0].Output;
+            var b = second.Outputs[0].Output;
+
+            var lastLine = a.ReplaceLineEndings("\n").TrimEnd().Split('\n')[^1].TrimEnd();
+            if (lastLine != "end")
+            {
+                failures.Add($"{node.Hostname}: running-config doesn't end with 'end' (last line: '{lastLine}'; {a.Length} chars)");
+            }
+
+            var hashA = ConfigBackupEvaluator.Hash(ConfigNormalizer.Normalize(a));
+            var hashB = ConfigBackupEvaluator.Hash(ConfigNormalizer.Normalize(b));
+            if (hashA != hashB)
+            {
+                failures.Add($"{node.Hostname}: normalized hash changed between two back-to-back pulls; a volatile line probably needs an ignore pattern");
+            }
+
+            TestContext.Current.TestOutputHelper?.WriteLine($"{node.Hostname}: {a.Length} chars, hash {hashA[..12]}");
+        }
+
+        Assert.True(failures.Count == 0, string.Join("\n", failures));
     }
 
     private static (LabConfig Lab, LabSsh Ssh) Require()

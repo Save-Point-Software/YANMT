@@ -11,6 +11,9 @@ public sealed class PollingOptions
     /// <summary>SNMP default-stats polls in flight at once.</summary>
     public int SnmpConcurrency { get; set; } = 16;
 
+    /// <summary>Config backups (SSH) in flight at once. Kept low: each one holds an SSH session on a device.</summary>
+    public int BackupConcurrency { get; set; } = 4;
+
     /// <summary>Reload targets at least this often, even without a change signal.</summary>
     public int ReloadSeconds { get; set; } = 300;
 }

@@ -59,7 +59,7 @@ public class ConfigBackupServiceTests
         var node = await test.AddNodeAsync("lab-rtr-01", "192.0.2.1");
         var (service, _, _) = Create(test);
 
-        var outcome = await service.RecordAsync(node, Config(), BackupTrigger.Scheduled, Ct);
+        var outcome = (await service.RecordAsync(node, Config(), BackupTrigger.Scheduled, Ct)).Outcome;
 
         Assert.True(outcome.Success);
         Assert.Equal(ConfigChangeKind.Initial, outcome.Kind);
@@ -77,7 +77,7 @@ public class ConfigBackupServiceTests
         var (service, _, _) = Create(test);
 
         await service.RecordAsync(node, Config(), BackupTrigger.Scheduled, Ct);
-        var second = await service.RecordAsync(node, Config(stamp: "23:59:59 UTC Tue Jan 6 2026"), BackupTrigger.Scheduled, Ct);
+        var second = (await service.RecordAsync(node, Config(stamp: "23:59:59 UTC Tue Jan 6 2026"), BackupTrigger.Scheduled, Ct)).Outcome;
 
         Assert.Equal(ConfigChangeKind.Unchanged, second.Kind);
         Assert.Single(await VersionsAsync(test, node));
@@ -92,7 +92,7 @@ public class ConfigBackupServiceTests
 
         await service.RecordAsync(node, Config(), BackupTrigger.Scheduled, Ct);
         test.Clock.Advance(TimeSpan.FromDays(1));
-        var second = await service.RecordAsync(node, Config(hostname: "lab-rtr-renamed"), BackupTrigger.Scheduled, Ct);
+        var second = (await service.RecordAsync(node, Config(hostname: "lab-rtr-renamed"), BackupTrigger.Scheduled, Ct)).Outcome;
 
         Assert.Equal(ConfigChangeKind.Changed, second.Kind);
         var versions = await VersionsAsync(test, node);
@@ -111,7 +111,7 @@ public class ConfigBackupServiceTests
             SettingKeys.ConfigBackup, new ConfigBackupSettings { NormalizationPatterns = ["^hostname "] }, Ct);
 
         await service.RecordAsync(node, Config(), BackupTrigger.Scheduled, Ct);
-        var second = await service.RecordAsync(node, Config(hostname: "lab-rtr-renamed"), BackupTrigger.Scheduled, Ct);
+        var second = (await service.RecordAsync(node, Config(hostname: "lab-rtr-renamed"), BackupTrigger.Scheduled, Ct)).Outcome;
 
         Assert.Equal(ConfigChangeKind.Unchanged, second.Kind);
     }
@@ -125,7 +125,7 @@ public class ConfigBackupServiceTests
         await new SettingsService(test.Factory, test.Clock).SetAsync(
             SettingKeys.ConfigBackup, new ConfigBackupSettings { NormalizationPatterns = ["(unclosed"] }, Ct);
 
-        var outcome = await service.RecordAsync(node, Config(), BackupTrigger.Scheduled, Ct);
+        var outcome = (await service.RecordAsync(node, Config(), BackupTrigger.Scheduled, Ct)).Outcome;
 
         Assert.False(outcome.Success);
         Assert.Empty(await VersionsAsync(test, node));
@@ -143,6 +143,30 @@ public class ConfigBackupServiceTests
         Assert.False(outcome.Success);
         Assert.Equal(Yanmt.Core.Connectivity.FailureCategory.NotConfigured, outcome.Failure);
         Assert.Empty(await VersionsAsync(test, node));
+    }
+
+    [Fact]
+    public async Task Last_verified_moves_on_any_success_but_not_on_failure_and_last_backup_only_on_a_new_version()
+    {
+        await using var test = await TestDatabase.CreateAsync();
+        var node = await test.AddNodeAsync("lab-rtr-01", "192.0.2.1");
+        var (service, engine, _) = Create(test);
+        DateTime Next() => (test.Clock.Now = test.Clock.Now.AddHours(1)).UtcDateTime;
+
+        Assert.Equal(new ConfigBackupSummary(0, null, null), await service.GetSummaryAsync(node, Ct));
+
+        var stored = Next();
+        await service.RecordAsync(node, Config(), BackupTrigger.Scheduled, Ct); // stores a version at `stored`
+        await engine.ApplyAsync([new BackupPollResult(node, stored, ConfigChangeKind.Initial)], Ct);
+
+        var unchanged = Next();
+        await engine.ApplyAsync([new BackupPollResult(node, unchanged, ConfigChangeKind.Unchanged)], Ct);
+        var summary = await service.GetSummaryAsync(node, Ct);
+        Assert.Equal(unchanged, summary.LastVerifiedUtc);
+        Assert.Equal(stored, summary.LatestCapturedUtc);
+
+        await engine.ApplyAsync([new BackupPollResult(node, Next(), null, "refused")], Ct);
+        Assert.Equal(unchanged, (await service.GetSummaryAsync(node, Ct)).LastVerifiedUtc); // a failure verifies nothing
     }
 
     [Fact]

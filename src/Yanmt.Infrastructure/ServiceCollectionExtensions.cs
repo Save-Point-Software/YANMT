@@ -85,6 +85,7 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<IcmpPoller>();
         services.AddHostedService<SnmpPoller>();
         services.AddHostedService<MonitorPoller>();
+        services.AddHostedService<ConfigBackupPoller>();
         return services;
     }
 }
