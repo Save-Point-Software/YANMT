@@ -57,6 +57,40 @@ namespace Yanmt.Infrastructure.Data.Migrations
                     b.ToTable("AuditEntries");
                 });
 
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.ConfigVersion", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CapturedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("LineCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("NodeId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<byte[]>("ProtectedRaw")
+                        .IsRequired()
+                        .HasColumnType("BLOB");
+
+                    b.Property<int>("RawLength")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NodeId", "CapturedUtc");
+
+                    b.ToTable("ConfigVersions");
+                });
+
             modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.CredentialProfile", b =>
                 {
                     b.Property<int>("Id")
@@ -787,6 +821,17 @@ namespace Yanmt.Infrastructure.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("Tags");
+                });
+
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.ConfigVersion", b =>
+                {
+                    b.HasOne("Yanmt.Infrastructure.Data.Entities.Node", "Node")
+                        .WithMany()
+                        .HasForeignKey("NodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Node");
                 });
 
             modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.Event", b =>
