@@ -32,7 +32,9 @@ public sealed record BackupOutcome(bool Success, ConfigChangeKind? Kind, string 
     public static BackupOutcome Failed(FailureCategory category, string message) => new(false, null, message, category);
 }
 
-public sealed record ConfigBackupSummary(int VersionCount, DateTime? LatestCapturedUtc);
+/// <param name="LatestCapturedUtc">When the newest version was stored (the last backup that found a change, or the first one).</param>
+/// <param name="LastVerifiedUtc">When a backup, scheduled or manual, last fetched the config and compared it, even if nothing changed.</param>
+public sealed record ConfigBackupSummary(int VersionCount, DateTime? LatestCapturedUtc, DateTime? LastVerifiedUtc);
 
 /// <summary>An outcome for the caller, plus the status result to hand to the engine (null when nothing should change status).</summary>
 public sealed record BackupAttempt(BackupOutcome Outcome, BackupPollResult? Result);
@@ -168,7 +170,11 @@ public sealed class ConfigBackupService(
         var versions = db.ConfigVersions.AsNoTracking().Where(v => v.NodeId == nodeId);
         var count = await versions.CountAsync(cancellationToken);
         var latest = count == 0 ? null : (DateTime?)await versions.MaxAsync(v => v.CapturedUtc, cancellationToken);
-        return new ConfigBackupSummary(count, latest);
+        var verified = await db.StatusSources.AsNoTracking()
+            .Where(x => x.NodeId == nodeId && x.SourceType == StatusSourceType.Backup && x.SourceKey == "")
+            .Select(x => x.LastVerifiedUtc)
+            .FirstOrDefaultAsync(cancellationToken);
+        return new ConfigBackupSummary(count, latest, verified);
     }
 
     /// <summary>Returns the raw text of a stored version, decrypted. Callers must mask it for viewers.</summary>

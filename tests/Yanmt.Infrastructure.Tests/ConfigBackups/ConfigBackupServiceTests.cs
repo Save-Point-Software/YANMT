@@ -146,6 +146,30 @@ public class ConfigBackupServiceTests
     }
 
     [Fact]
+    public async Task Last_verified_moves_on_any_success_but_not_on_failure_and_last_backup_only_on_a_new_version()
+    {
+        await using var test = await TestDatabase.CreateAsync();
+        var node = await test.AddNodeAsync("lab-rtr-01", "192.0.2.1");
+        var (service, engine, _) = Create(test);
+        DateTime Next() => (test.Clock.Now = test.Clock.Now.AddHours(1)).UtcDateTime;
+
+        Assert.Equal(new ConfigBackupSummary(0, null, null), await service.GetSummaryAsync(node, Ct));
+
+        var stored = Next();
+        await service.RecordAsync(node, Config(), BackupTrigger.Scheduled, Ct); // stores a version at `stored`
+        await engine.ApplyAsync([new BackupPollResult(node, stored, ConfigChangeKind.Initial)], Ct);
+
+        var unchanged = Next();
+        await engine.ApplyAsync([new BackupPollResult(node, unchanged, ConfigChangeKind.Unchanged)], Ct);
+        var summary = await service.GetSummaryAsync(node, Ct);
+        Assert.Equal(unchanged, summary.LastVerifiedUtc);
+        Assert.Equal(stored, summary.LatestCapturedUtc);
+
+        await engine.ApplyAsync([new BackupPollResult(node, Next(), null, "refused")], Ct);
+        Assert.Equal(unchanged, (await service.GetSummaryAsync(node, Ct)).LastVerifiedUtc); // a failure verifies nothing
+    }
+
+    [Fact]
     public async Task Only_a_scheduled_failure_reaches_the_status_engine()
     {
         await using var test = await TestDatabase.CreateAsync();

@@ -438,6 +438,11 @@ public sealed class StatusEngine(
         SetState(db, source, evaluation.State, null, evaluation.ValueText, result.TimestampUtc,
             $"{hostname}: config backup {source.State} → {evaluation.State}: {evaluation.Reason}");
 
+        if (result.Kind is not null)
+        {
+            source.LastVerifiedUtc = result.TimestampUtc; // manual and scheduled successes both verify
+        }
+
         if (result.Kind == ConfigChangeKind.Changed)
         {
             db.Events.Add(new Event

@@ -13,8 +13,10 @@
         <dd>@(Live?.Source(StatusSourceType.Backup) is { } source ? $"{source.State}: {source.ValueText}" : "no scheduled backup yet")</dd>
         <dt>Stored versions</dt>
         <dd>@_summary.VersionCount</dd>
-        <dt>Latest version</dt>
-        <dd>@(_summary.LatestCapturedUtc is { } at ? at.ToString("yyyy-MM-dd HH:mm:ss") + " UTC" : "none")</dd>
+        <dt>Last backup</dt>
+        <dd>@(_summary.LatestCapturedUtc is { } at ? at.ToString("yyyy-MM-dd HH:mm:ss") + " UTC" : "never") <span class="muted">(newest stored version)</span></dd>
+        <dt>Last verified</dt>
+        <dd>@(_summary.LastVerifiedUtc is { } ok ? ok.ToString("yyyy-MM-dd HH:mm:ss") + " UTC" : "never") <span class="muted">(last successful backup, scheduled or manual, even if the config was unchanged)</span></dd>
     </dl>
 
     @if (_isAdmin)
@@ -42,7 +44,7 @@
     /// <summary>Changes on each live update, so the summary reloads after a scheduled backup.</summary>
     [Parameter] public int Version { get; set; }
 
-    private ConfigBackupSummary _summary = new(0, null);
+    private ConfigBackupSummary _summary = new(0, null, null);
     private BackupOutcome? _outcome;
     private bool _busy;
     private bool _isAdmin;

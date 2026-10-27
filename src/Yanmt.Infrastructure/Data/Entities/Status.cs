@@ -35,6 +35,9 @@ public class StatusSource
     public DateTime SinceUtc { get; set; }
     public DateTime? LastUpdateUtc { get; set; }
 
+    /// <summary>Backup source only: when a backup last fetched the config and compared it, changed or not. Failures don't move it.</summary>
+    public DateTime? LastVerifiedUtc { get; set; }
+
     /// <summary>Candidate state waiting on consecutive-match dampening.</summary>
     public Severity? PendingState { get; set; }
 
