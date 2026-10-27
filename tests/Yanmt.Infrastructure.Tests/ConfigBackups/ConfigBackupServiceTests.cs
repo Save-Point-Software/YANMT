@@ -59,7 +59,7 @@ public class ConfigBackupServiceTests
         var node = await test.AddNodeAsync("lab-rtr-01", "192.0.2.1");
         var (service, _, _) = Create(test);
 
-        var outcome = await service.RecordAsync(node, Config(), Ct);
+        var outcome = await service.RecordAsync(node, Config(), BackupTrigger.Scheduled, Ct);
 
         Assert.True(outcome.Success);
         Assert.Equal(ConfigChangeKind.Initial, outcome.Kind);
@@ -76,8 +76,8 @@ public class ConfigBackupServiceTests
         var node = await test.AddNodeAsync("lab-rtr-01", "192.0.2.1");
         var (service, _, _) = Create(test);
 
-        await service.RecordAsync(node, Config(), Ct);
-        var second = await service.RecordAsync(node, Config(stamp: "23:59:59 UTC Tue Jan 6 2026"), Ct);
+        await service.RecordAsync(node, Config(), BackupTrigger.Scheduled, Ct);
+        var second = await service.RecordAsync(node, Config(stamp: "23:59:59 UTC Tue Jan 6 2026"), BackupTrigger.Scheduled, Ct);
 
         Assert.Equal(ConfigChangeKind.Unchanged, second.Kind);
         Assert.Single(await VersionsAsync(test, node));
@@ -90,9 +90,9 @@ public class ConfigBackupServiceTests
         var node = await test.AddNodeAsync("lab-rtr-01", "192.0.2.1");
         var (service, _, _) = Create(test);
 
-        await service.RecordAsync(node, Config(), Ct);
+        await service.RecordAsync(node, Config(), BackupTrigger.Scheduled, Ct);
         test.Clock.Advance(TimeSpan.FromDays(1));
-        var second = await service.RecordAsync(node, Config(hostname: "lab-rtr-renamed"), Ct);
+        var second = await service.RecordAsync(node, Config(hostname: "lab-rtr-renamed"), BackupTrigger.Scheduled, Ct);
 
         Assert.Equal(ConfigChangeKind.Changed, second.Kind);
         var versions = await VersionsAsync(test, node);
@@ -110,8 +110,8 @@ public class ConfigBackupServiceTests
         await new SettingsService(test.Factory, test.Clock).SetAsync(
             SettingKeys.ConfigBackup, new ConfigBackupSettings { NormalizationPatterns = ["^hostname "] }, Ct);
 
-        await service.RecordAsync(node, Config(), Ct);
-        var second = await service.RecordAsync(node, Config(hostname: "lab-rtr-renamed"), Ct);
+        await service.RecordAsync(node, Config(), BackupTrigger.Scheduled, Ct);
+        var second = await service.RecordAsync(node, Config(hostname: "lab-rtr-renamed"), BackupTrigger.Scheduled, Ct);
 
         Assert.Equal(ConfigChangeKind.Unchanged, second.Kind);
     }
@@ -125,7 +125,7 @@ public class ConfigBackupServiceTests
         await new SettingsService(test.Factory, test.Clock).SetAsync(
             SettingKeys.ConfigBackup, new ConfigBackupSettings { NormalizationPatterns = ["(unclosed"] }, Ct);
 
-        var outcome = await service.RecordAsync(node, Config(), Ct);
+        var outcome = await service.RecordAsync(node, Config(), BackupTrigger.Scheduled, Ct);
 
         Assert.False(outcome.Success);
         Assert.Empty(await VersionsAsync(test, node));
@@ -138,11 +138,46 @@ public class ConfigBackupServiceTests
         var node = await test.AddNodeAsync("lab-rtr-01", "192.0.2.1");
         var (service, _, _) = Create(test);
 
-        var outcome = await service.BackupNodeAsync(node, Ct);
+        var outcome = await service.BackupNodeAsync(node, BackupTrigger.Scheduled, Ct);
 
         Assert.False(outcome.Success);
         Assert.Equal(Yanmt.Core.Connectivity.FailureCategory.NotConfigured, outcome.Failure);
         Assert.Empty(await VersionsAsync(test, node));
+    }
+
+    [Fact]
+    public async Task Only_a_scheduled_failure_reaches_the_status_engine()
+    {
+        await using var test = await TestDatabase.CreateAsync();
+        var manualNode = await test.AddNodeAsync("lab-rtr-01", "192.0.2.1");
+        var scheduledNode = await test.AddNodeAsync("lab-rtr-02", "192.0.2.2");
+        var (service, engine, cache) = Create(test);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        var run = engine.RunAsync(cts.Token);
+
+        // Neither node has an SSH profile, so both backups fail. The queue is ordered, so once the
+        // scheduled node shows Warning the manual node's (absent) result has been processed too.
+        var manual = await service.BackupNodeAsync(manualNode, BackupTrigger.Manual, Ct);
+        await service.BackupNodeAsync(scheduledNode, BackupTrigger.Scheduled, Ct);
+        for (var i = 0; i < 100 && cache.StateOf(scheduledNode) != Severity.Warning; i++)
+        {
+            await Task.Delay(50, Ct);
+        }
+
+        await cts.CancelAsync();
+        try
+        {
+            await run; // cancellation ends the engine loop
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        Assert.False(manual.Success); // the operator still sees the failure
+        Assert.Equal(Severity.Warning, cache.StateOf(scheduledNode));
+        Assert.Equal(Severity.Unknown, cache.StateOf(manualNode));
+        await using var db = test.Open();
+        Assert.Empty(await db.StatusSources.Where(s => s.NodeId == manualNode).ToListAsync(Ct));
     }
 
     [Theory]
@@ -205,7 +240,7 @@ public class ConfigBackupServiceTests
         await using var test = await TestDatabase.CreateAsync();
         var node = await test.AddNodeAsync("lab-rtr-01", "192.0.2.1");
         var (service, _, _) = Create(test);
-        await service.RecordAsync(node, Config(), Ct);
+        await service.RecordAsync(node, Config(), BackupTrigger.Scheduled, Ct);
 
         await using (var db = test.Open())
         {

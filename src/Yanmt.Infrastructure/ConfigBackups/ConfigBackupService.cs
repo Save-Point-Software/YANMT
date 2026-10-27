@@ -16,6 +16,16 @@ using Yanmt.Infrastructure.Settings;
 
 namespace Yanmt.Infrastructure.ConfigBackups;
 
+/// <summary>Who started a backup. Only a scheduled backup's failure changes the node's status.</summary>
+public enum BackupTrigger
+{
+    /// <summary>The daily (or configured-interval) run. A failure sets the Backup source to Warning, so the node changes colour.</summary>
+    Scheduled,
+
+    /// <summary>An operator pressed "Back up now". A failure is shown to them, but status and events stay untouched.</summary>
+    Manual,
+}
+
 /// <summary>What one backup attempt did.</summary>
 public sealed record BackupOutcome(bool Success, ConfigChangeKind? Kind, string Message, FailureCategory? Failure = null)
 {
@@ -47,10 +57,11 @@ public sealed class ConfigBackupService(
     private static readonly ConcurrentDictionary<int, SemaphoreSlim> NodeLocks = new();
 
     /// <summary>
-    /// Backs up one node now (scheduled or on demand). Failures come back as a failed outcome and as a
-    /// Warning on the node's backup source; only cancellation throws.
+    /// Backs up one node now. Failures come back as a failed outcome; only cancellation throws. A failed
+    /// <see cref="BackupTrigger.Scheduled"/> backup also sets the node's backup source to Warning, while a
+    /// failed <see cref="BackupTrigger.Manual"/> one doesn't (the operator sees the outcome).
     /// </summary>
-    public async Task<BackupOutcome> BackupNodeAsync(int nodeId, CancellationToken cancellationToken = default)
+    public async Task<BackupOutcome> BackupNodeAsync(int nodeId, BackupTrigger trigger, CancellationToken cancellationToken = default)
     {
         // Two overlapping backups of one node could both see "no earlier version" and store twice.
         var gate = NodeLocks.GetOrAdd(nodeId, _ => new SemaphoreSlim(1, 1));
@@ -70,8 +81,8 @@ public sealed class ConfigBackupService(
 
             var fetched = await FetchAsync(node, cancellationToken);
             return fetched.Raw is { } raw
-                ? await RecordAsync(node.Id, raw, cancellationToken)
-                : await FailAsync(node.Id, fetched.Failure!.Value, fetched.Error!, cancellationToken);
+                ? await RecordAsync(node.Id, raw, trigger, cancellationToken)
+                : await FailAsync(node.Id, trigger, fetched.Failure!.Value, fetched.Error!, cancellationToken);
         }
         finally
         {
@@ -83,7 +94,7 @@ public sealed class ConfigBackupService(
     /// Normalizes and hashes <paramref name="raw"/>, stores a version if the content changed, and reports
     /// the attempt to the status engine. A bad normalization pattern fails the backup visibly.
     /// </summary>
-    internal async Task<BackupOutcome> RecordAsync(int nodeId, string raw, CancellationToken cancellationToken)
+    internal async Task<BackupOutcome> RecordAsync(int nodeId, string raw, BackupTrigger trigger, CancellationToken cancellationToken)
     {
         var now = clock.GetUtcNow().UtcDateTime;
         string normalized;
@@ -94,7 +105,7 @@ public sealed class ConfigBackupService(
         }
         catch (Exception ex) when (ex is ArgumentException or RegexMatchTimeoutException)
         {
-            return await FailAsync(nodeId, FailureCategory.NotConfigured,
+            return await FailAsync(nodeId, trigger, FailureCategory.NotConfigured,
                 $"A config ignore pattern is invalid or too slow: {ex.Message}", cancellationToken);
         }
 
@@ -141,9 +152,14 @@ public sealed class ConfigBackupService(
         return blob is null ? null : Encoding.UTF8.GetString(protector.Unprotect(blob));
     }
 
-    private async Task<BackupOutcome> FailAsync(int nodeId, FailureCategory category, string message, CancellationToken cancellationToken)
+    private async Task<BackupOutcome> FailAsync(int nodeId, BackupTrigger trigger, FailureCategory category, string message, CancellationToken cancellationToken)
     {
-        logger.LogWarning("Config backup of node {NodeId} failed ({Category}): {Message}", nodeId, category, message);
+        logger.LogWarning("Config backup of node {NodeId} failed ({Trigger}, {Category}): {Message}", nodeId, trigger, category, message);
+        if (trigger == BackupTrigger.Manual)
+        {
+            return BackupOutcome.Failed(category, message); // no state change: the operator sees this outcome
+        }
+
         await engine.SubmitAsync(new BackupPollResult(nodeId, clock.GetUtcNow().UtcDateTime, null, message), cancellationToken);
         return BackupOutcome.Failed(category, message);
     }
