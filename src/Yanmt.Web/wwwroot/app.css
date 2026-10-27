@@ -923,3 +923,13 @@ input.narrow,
 .map-link.bound.selected .map-link-line {
     stroke-width: 6;
 }
+
+/* Config backup diffs */
+table.diff { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+table.diff td { padding: 0 0.5rem; vertical-align: top; }
+table.diff pre { margin: 0; white-space: pre-wrap; word-break: break-all; font: inherit; }
+table.diff td.num { color: var(--muted, #888); text-align: right; width: 3rem; user-select: none; }
+.diff-added { background: rgba(46, 160, 67, 0.18); }
+.diff-removed { background: rgba(248, 81, 73, 0.18); }
+.diff-modified { background: rgba(210, 153, 34, 0.18); }
+.diff-blank { background: rgba(128, 128, 128, 0.08); }

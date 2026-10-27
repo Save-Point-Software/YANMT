@@ -51,6 +51,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ReadOnlySshCollector>();
         services.AddScoped<ConnectionTester>();
         services.AddScoped<ConfigBackupService>();
+        services.AddScoped<ConfigHistoryService>();
 
         services.AddSingleton<InventoryChangeSignal>();
         services.AddSingleton<StatusCache>();
