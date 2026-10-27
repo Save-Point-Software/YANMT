@@ -135,10 +135,7 @@
                 </section>
                 break;
             case "backups":
-                <section class="card">
-                    <h2>Config backups</h2>
-                    <p class="muted">Scheduled <code>show running-config</code> backups with history and diffs arrive in Phase 5.</p>
-                </section>
+                <NodeConfigBackupsTab NodeId="Id" Live="live" Version="_version" />
                 break;
             default:
                 <NodeOverviewTab NodeId="Id" Node="_node" Live="live" Colors="_colors" Version="_version" />

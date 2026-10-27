@@ -59,7 +59,7 @@ public class ConfigBackupServiceTests
         var node = await test.AddNodeAsync("lab-rtr-01", "192.0.2.1");
         var (service, _, _) = Create(test);
 
-        var outcome = await service.RecordAsync(node, Config(), BackupTrigger.Scheduled, Ct);
+        var outcome = (await service.RecordAsync(node, Config(), BackupTrigger.Scheduled, Ct)).Outcome;
 
         Assert.True(outcome.Success);
         Assert.Equal(ConfigChangeKind.Initial, outcome.Kind);
@@ -77,7 +77,7 @@ public class ConfigBackupServiceTests
         var (service, _, _) = Create(test);
 
         await service.RecordAsync(node, Config(), BackupTrigger.Scheduled, Ct);
-        var second = await service.RecordAsync(node, Config(stamp: "23:59:59 UTC Tue Jan 6 2026"), BackupTrigger.Scheduled, Ct);
+        var second = (await service.RecordAsync(node, Config(stamp: "23:59:59 UTC Tue Jan 6 2026"), BackupTrigger.Scheduled, Ct)).Outcome;
 
         Assert.Equal(ConfigChangeKind.Unchanged, second.Kind);
         Assert.Single(await VersionsAsync(test, node));
@@ -92,7 +92,7 @@ public class ConfigBackupServiceTests
 
         await service.RecordAsync(node, Config(), BackupTrigger.Scheduled, Ct);
         test.Clock.Advance(TimeSpan.FromDays(1));
-        var second = await service.RecordAsync(node, Config(hostname: "lab-rtr-renamed"), BackupTrigger.Scheduled, Ct);
+        var second = (await service.RecordAsync(node, Config(hostname: "lab-rtr-renamed"), BackupTrigger.Scheduled, Ct)).Outcome;
 
         Assert.Equal(ConfigChangeKind.Changed, second.Kind);
         var versions = await VersionsAsync(test, node);
@@ -111,7 +111,7 @@ public class ConfigBackupServiceTests
             SettingKeys.ConfigBackup, new ConfigBackupSettings { NormalizationPatterns = ["^hostname "] }, Ct);
 
         await service.RecordAsync(node, Config(), BackupTrigger.Scheduled, Ct);
-        var second = await service.RecordAsync(node, Config(hostname: "lab-rtr-renamed"), BackupTrigger.Scheduled, Ct);
+        var second = (await service.RecordAsync(node, Config(hostname: "lab-rtr-renamed"), BackupTrigger.Scheduled, Ct)).Outcome;
 
         Assert.Equal(ConfigChangeKind.Unchanged, second.Kind);
     }
@@ -125,7 +125,7 @@ public class ConfigBackupServiceTests
         await new SettingsService(test.Factory, test.Clock).SetAsync(
             SettingKeys.ConfigBackup, new ConfigBackupSettings { NormalizationPatterns = ["(unclosed"] }, Ct);
 
-        var outcome = await service.RecordAsync(node, Config(), BackupTrigger.Scheduled, Ct);
+        var outcome = (await service.RecordAsync(node, Config(), BackupTrigger.Scheduled, Ct)).Outcome;
 
         Assert.False(outcome.Success);
         Assert.Empty(await VersionsAsync(test, node));
