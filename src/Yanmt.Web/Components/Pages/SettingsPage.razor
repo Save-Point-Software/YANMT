@@ -1,4 +1,5 @@
 @page "/settings"
+@using Yanmt.Core.ConfigBackups
 @using Yanmt.Core.Monitoring
 @inject SettingsService Settings
 @inject AuthenticationStateProvider Auth
@@ -150,6 +151,47 @@
         }
     </section>
 
+    <section class="card">
+        <h2>Config backups</h2>
+        <p class="muted">
+            <code>show running-config</code> is pulled over SSH on this interval and a new version is stored only when
+            the normalized text changes. Built-in volatile lines (timestamps, byte counts, clock-period) are always
+            ignored; add more below. Rules are global. Use one regular expression per line; any config line matching
+            one (anywhere, case-insensitive) is ignored when comparing versions. Stored configs are never altered.
+        </p>
+        <div class="field-row">
+            <div class="field narrow-field">
+                <label><input type="checkbox" @bind="_backupEnabled" disabled="@(!_isAdmin)" /> Scheduled backups enabled</label>
+            </div>
+            <div class="field narrow-field">
+                <label for="backup-interval">Interval (s)</label>
+                <input id="backup-interval" type="number" @bind="_backupInterval" disabled="@(!_isAdmin)" />
+            </div>
+        </div>
+        <div class="field">
+            <label for="backup-patterns">Ignore patterns (one per line)</label>
+            <textarea id="backup-patterns" rows="6" @bind="_backupPatterns" disabled="@(!_isAdmin)"
+                      placeholder="^! Last configuration change"></textarea>
+        </div>
+
+        @foreach (var (_, error) in _backupErrors)
+        {
+            <p class="error">@error</p>
+        }
+
+        @if (_isAdmin)
+        {
+            <div class="form-actions">
+                <button class="btn primary" @onclick="SaveBackupAsync">Save backup settings</button>
+                <button class="btn" @onclick="ResetBackup">Reset to defaults</button>
+                @if (_backupSaved)
+                {
+                    <span class="success">Saved. Applies on the next scheduling pass.</span>
+                }
+            </div>
+        }
+    </section>
+
     <p class="muted">Retention settings are added here in Phase 6.</p>
 </div>
 
@@ -174,6 +216,46 @@
         Load(await Settings.GetAsync(SettingKeys.StatusColors));
         _icmp = new IcmpForm(await Settings.GetAsync(SettingKeys.Icmp));
         _snmp = new SnmpForm(await Settings.GetAsync(SettingKeys.Snmp));
+        LoadBackup(await Settings.GetAsync(SettingKeys.ConfigBackup));
+    }
+
+    private bool _backupEnabled = true;
+    private int _backupInterval = 86400;
+    private string _backupPatterns = "";
+    private IReadOnlyList<(string Field, string Error)> _backupErrors = [];
+    private bool _backupSaved;
+
+    private void LoadBackup(ConfigBackupSettings s)
+    {
+        _backupEnabled = s.Enabled;
+        _backupInterval = s.IntervalSeconds;
+        _backupPatterns = string.Join('\n', s.NormalizationPatterns);
+    }
+
+    private void ResetBackup()
+    {
+        LoadBackup(new ConfigBackupSettings());
+        _backupSaved = false;
+    }
+
+    private async Task SaveBackupAsync()
+    {
+        _backupSaved = false;
+        var settings = new ConfigBackupSettings
+        {
+            Enabled = _backupEnabled,
+            IntervalSeconds = _backupInterval,
+            NormalizationPatterns = _backupPatterns
+                .Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries),
+        };
+        _backupErrors = settings.Validate();
+        if (!_isAdmin || _backupErrors.Count > 0)
+        {
+            return;
+        }
+
+        await Settings.SetAsync(SettingKeys.ConfigBackup, settings);
+        _backupSaved = true;
     }
 
     private SnmpForm _snmp = new(new SnmpSettings());
