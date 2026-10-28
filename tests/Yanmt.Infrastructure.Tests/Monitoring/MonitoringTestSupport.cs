@@ -1,3 +1,4 @@
+using Yanmt.Infrastructure.Events;
 using System.Net;
 using Microsoft.Extensions.Logging.Abstractions;
 using Yanmt.Core.Inventory;
@@ -28,11 +29,11 @@ internal static class MonitoringTestSupport
         return node.Id;
     }
 
-    public static (StatusEngine Engine, StatusCache Cache, StatusBroadcaster Broadcaster) Engine(this TestDatabase test)
+    public static (StatusEngine Engine, StatusCache Cache, StatusBroadcaster Broadcaster) Engine(this TestDatabase test, INotifier? notifier = null)
     {
         var cache = new StatusCache();
         var broadcaster = new StatusBroadcaster(test.Clock);
-        return (new StatusEngine(test.Factory, cache, broadcaster, test.Clock, NullLogger<StatusEngine>.Instance), cache, broadcaster);
+        return (new StatusEngine(test.Factory, cache, broadcaster, notifier ?? new InAppNotifier(), test.Clock, NullLogger<StatusEngine>.Instance), cache, broadcaster);
     }
 
     public static IcmpResult Replies(double avgMs, int received = 4) => new(4, received, avgMs, avgMs, avgMs, null);

@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Yanmt.Core.Monitoring;
 using Yanmt.Core.Status;
 using Yanmt.Infrastructure.Data.Entities;
+using Yanmt.Infrastructure.Events;
 using Yanmt.Infrastructure.Monitoring;
 using static Yanmt.Infrastructure.Tests.Monitoring.MonitoringTestSupport;
 
@@ -199,6 +200,50 @@ public class StatusEngineTests
 
         await cts.CancelAsync();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+    }
+
+    private sealed class RecordingNotifier(bool fail = false) : INotifier
+    {
+        public List<EventNotice> Notices { get; } = [];
+
+        public Task NotifyAsync(IReadOnlyList<EventNotice> events, CancellationToken cancellationToken = default)
+        {
+            Notices.AddRange(events);
+            return fail ? throw new InvalidOperationException("notifier down") : Task.CompletedTask;
+        }
+    }
+
+    [Fact]
+    public async Task Committed_events_are_routed_through_the_notifier_with_their_ids()
+    {
+        await using var test = await TestDatabase.CreateAsync();
+        var node = await test.AddNodeAsync("lab-rtr-spoke-01", "192.0.2.21");
+        var notifier = new RecordingNotifier();
+        var (engine, _, _) = test.Engine(notifier);
+
+        await engine.ApplyAsync([Poll(test, node, Replies(2))], Ct);
+        Assert.Empty(notifier.Notices); // first data is not an event
+        await engine.ApplyAsync([Poll(test, node, NoReply)], Ct);
+
+        var notice = Assert.Single(notifier.Notices);
+        await using var db = test.Open();
+        var stored = await db.Events.SingleAsync(Ct);
+        Assert.Equal((stored.Id, node, Severity.Warning), (notice.Id, notice.NodeId, notice.NewState));
+    }
+
+    [Fact]
+    public async Task A_failing_notifier_does_not_lose_the_event_or_the_state_update()
+    {
+        await using var test = await TestDatabase.CreateAsync();
+        var node = await test.AddNodeAsync("lab-rtr-spoke-01", "192.0.2.21");
+        var (engine, cache, _) = test.Engine(new RecordingNotifier(fail: true));
+
+        await engine.ApplyAsync([Poll(test, node, Replies(2))], Ct);
+        await engine.ApplyAsync([Poll(test, node, NoReply)], Ct);
+
+        Assert.Equal(Severity.Warning, cache.StateOf(node));
+        await using var db = test.Open();
+        Assert.Single(await db.Events.ToListAsync(Ct));
     }
 
     internal static async Task WaitUntilAsync(Func<bool> condition, int timeoutMs = 10_000)

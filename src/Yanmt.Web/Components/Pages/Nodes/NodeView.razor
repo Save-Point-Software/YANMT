@@ -2,6 +2,7 @@
 @using Yanmt.Core.Monitoring
 @using Yanmt.Infrastructure.Data.Entities
 @using Yanmt.Infrastructure.Monitoring
+@using Yanmt.Web.Components.Pages.Events
 @implements IDisposable
 @inject NodeService Nodes
 @inject NodeDetailService Detail
@@ -110,28 +111,8 @@
                 break;
             case "events":
                 <section class="card">
-                    <h2>Recent events</h2>
-                    @if (_events.Count == 0)
-                    {
-                        <p class="muted">No state changes recorded.</p>
-                    }
-                    else
-                    {
-                        <table class="grid">
-                            <thead><tr><th>Time (UTC)</th><th class="col-state"></th><th>Event</th></tr></thead>
-                            <tbody>
-                                @foreach (var e in _events)
-                                {
-                                    <tr>
-                                        <td class="mono nowrap">@e.TimestampUtc.ToString("yyyy-MM-dd HH:mm:ss")</td>
-                                        <td class="col-state"><StateDot State="e.NewState" Colors="_colors" /></td>
-                                        <td>@e.Message</td>
-                                    </tr>
-                                }
-                            </tbody>
-                        </table>
-                    }
-                    <p class="muted">The full event log (filters, acknowledgement, export) arrives in Phase 6.</p>
+                    <h2>Events</h2>
+                    <EventLog NodeId="Id" />
                 </section>
                 break;
             case "backups":
@@ -156,7 +137,6 @@
 
     private NodeListItem? _node;
     private NodeSystemView? _system;
-    private List<NodeEventItem> _events = [];
     private StatusColors _colors = StatusColors.Default;
     private bool _notFound;
 
@@ -188,7 +168,6 @@
 
         _hasSnmpProfile = (await Nodes.GetForEditAsync(Id))?.SnmpProfileId is not null;
         _system = await Detail.GetSystemAsync(Id);
-        _events = await Nodes.RecentEventsAsync(Id, 50);
     }
 
     private void OnStatusChanged(IReadOnlyCollection<int> ids)
@@ -198,8 +177,7 @@
             _ = InvokeAsync(async () =>
             {
                 _system = await Detail.GetSystemAsync(Id);
-                _events = await Nodes.RecentEventsAsync(Id, 50);
-                _version++;
+                        _version++;
                 StateHasChanged();
             });
         }

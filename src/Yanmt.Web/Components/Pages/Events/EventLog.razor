@@ -1,0 +1,203 @@
+@using Yanmt.Infrastructure.Data.Entities
+@using Yanmt.Infrastructure.Events
+@implements IDisposable
+@inject EventService Events
+@inject InAppNotifier Notifier
+@inject NodeService Nodes
+@inject SettingsService Settings
+@inject AuthenticationStateProvider Auth
+
+<div class="toolbar">
+    @if (NodeId is null)
+    {
+        <select @bind="_node" @bind:after="ResetAsync" aria-label="Node">
+            <option value="">All nodes</option>
+            @foreach (var n in _nodes)
+            {
+                <option value="@n.Id">@n.Hostname</option>
+            }
+        </select>
+    }
+    <select @bind="_state" @bind:after="ResetAsync" aria-label="State">
+        <option value="">All states</option>
+        @foreach (var s in Enum.GetValues<Severity>())
+        {
+            <option value="@s">@s</option>
+        }
+    </select>
+    <select @bind="_source" @bind:after="ResetAsync" aria-label="Source">
+        <option value="">All sources</option>
+        @foreach (var s in Enum.GetValues<StatusSourceType>())
+        {
+            <option value="@s">@s</option>
+        }
+    </select>
+    <label><input type="checkbox" @bind="_unackedOnly" @bind:after="ResetAsync" /> Unacknowledged only</label>
+    <span class="muted">@_total event(s)</span>
+    @if (_isAdmin)
+    {
+        @if (_confirmAll)
+        {
+            <span>Acknowledge all @_total event(s) matching this filter?</span>
+            <button type="button" class="btn danger" disabled="@_busy" @onclick="AcknowledgeAllAsync">Yes, acknowledge all</button>
+            <button type="button" class="btn" @onclick="() => _confirmAll = false">Cancel</button>
+        }
+        else
+        {
+            <button type="button" class="btn" disabled="@(_busy || _total == 0)" @onclick="() => _confirmAll = true">Acknowledge all…</button>
+        }
+    }
+</div>
+
+@if (_message is not null)
+{
+    <p class="muted" role="status">@_message</p>
+}
+
+@if (_rows.Count == 0)
+{
+    <p class="muted">No events match.</p>
+}
+else
+{
+    <div class="table-wrap">
+        <table class="grid">
+            <thead>
+                <tr><th>Time (UTC)</th><th class="col-state"></th>@if (NodeId is null) {<th>Node</th>}<th>Source</th><th>Event</th><th>Acknowledged</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var e in _rows)
+                {
+                    <tr @key="e.Id">
+                        <td class="mono nowrap">@e.TimestampUtc.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                        <td class="col-state"><StateDot State="e.NewState" Colors="_colors" /></td>
+                        @if (NodeId is null)
+                        {
+                            <td>@e.Hostname</td>
+                        }
+                        <td>@e.Source</td>
+                        <td>@e.Message</td>
+                        <td class="nowrap">
+                            @if (e.AcknowledgedUtc is { } at)
+                            {
+                                <span title="@at.ToString("yyyy-MM-dd HH:mm:ss") UTC">@e.AcknowledgedBy</span>
+                            }
+                            else
+                            {
+                                <button type="button" class="btn link" disabled="@_busy" @onclick="() => AcknowledgeAsync(e.Id)">Acknowledge</button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    <div class="actions">
+        <button type="button" class="btn" disabled="@(_page == 0)" @onclick="() => GoAsync(_page - 1)">Newer</button>
+        <span class="muted">Page @(_page + 1) of @Math.Max(1, (_total + PageSize - 1) / PageSize)</span>
+        <button type="button" class="btn" disabled="@((_page + 1) * PageSize >= _total)" @onclick="() => GoAsync(_page + 1)">Older</button>
+    </div>
+}
+
+@code {
+    private const int PageSize = 50;
+
+    /// <summary>When set, the log is limited to this node and the node filter is hidden.</summary>
+    [Parameter] public int? NodeId { get; set; }
+
+    private List<EventRow> _rows = [];
+    private List<NodeListItem> _nodes = [];
+    private StatusColors _colors = StatusColors.Default;
+    private string _node = "", _state = "", _source = "";
+    private bool _unackedOnly, _isAdmin, _busy, _confirmAll;
+    private int _page, _total;
+    private string? _message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _isAdmin = (await Auth.GetAuthenticationStateAsync()).User.IsInRole(YanmtRoles.Admin);
+        _colors = await Settings.GetAsync(SettingKeys.StatusColors);
+        if (NodeId is null)
+        {
+            _nodes = await Nodes.ListAsync();
+        }
+
+        await LoadAsync();
+        Notifier.EventsRecorded += OnRecorded;
+    }
+
+    private EventFilter Filter => new(
+        NodeId ?? (int.TryParse(_node, out var n) ? n : null),
+        Enum.TryParse<Severity>(_state, out var st) ? st : null,
+        Enum.TryParse<StatusSourceType>(_source, out var so) ? so : null,
+        _unackedOnly);
+
+    private async Task LoadAsync()
+    {
+        (_rows, _total) = await Events.QueryAsync(Filter, _page * PageSize, PageSize);
+        if (_page > 0 && _rows.Count == 0)
+        {
+            _page = Math.Max(0, (_total - 1) / PageSize);
+            (_rows, _total) = await Events.QueryAsync(Filter, _page * PageSize, PageSize);
+        }
+    }
+
+    private async Task ResetAsync()
+    {
+        _page = 0;
+        _confirmAll = false;
+        _message = null;
+        await LoadAsync();
+    }
+
+    private async Task GoAsync(int page)
+    {
+        _page = page;
+        await LoadAsync();
+    }
+
+    private async Task AcknowledgeAsync(long id)
+    {
+        _busy = true;
+        try
+        {
+            await Events.AcknowledgeAsync(id);
+            await LoadAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task AcknowledgeAllAsync()
+    {
+        _busy = true;
+        try
+        {
+            var user = (await Auth.GetAuthenticationStateAsync()).User;
+            var count = await Events.AcknowledgeAllAsync(Filter, user);
+            _message = $"Acknowledged {count} event(s).";
+            _confirmAll = false;
+            await LoadAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void OnRecorded(IReadOnlyList<EventNotice> events)
+    {
+        if (_page == 0 && (NodeId is null || events.Any(e => e.NodeId == NodeId)))
+        {
+            _ = InvokeAsync(async () =>
+            {
+                await LoadAsync();
+                StateHasChanged();
+            });
+        }
+    }
+
+    public void Dispose() => Notifier.EventsRecorded -= OnRecorded;
+}
