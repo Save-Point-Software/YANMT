@@ -81,9 +81,9 @@
                 <label>To <select @bind="_toId">
                     @foreach (var v in _versions) { <option value="@v.Id">@v.CapturedUtc.ToString("yyyy-MM-dd HH:mm:ss")</option> }
                 </select></label>
-                <label>Layout <select @bind="_sideBySide">
-                    <option value="true">Side by side</option>
-                    <option value="false">Unified</option>
+                <label>Layout <select @bind="_layout">
+                    <option value="side">Side by side</option>
+                    <option value="unified">Unified</option>
                 </select></label>
                 <button type="button" class="btn" @onclick="CompareAsync">Compare</button>
             </div>
@@ -175,7 +175,8 @@ else
     private ConfigText? _text;
     private long _fromId;
     private long _toId;
-    private bool _sideBySide = true;
+    private string _layout = "side";
+    private bool _sideBySide => _layout != "unified";
     private ConfigDiffResult? _diff;
     private string? _diffError;
     private System.Security.Claims.ClaimsPrincipal _user = new();

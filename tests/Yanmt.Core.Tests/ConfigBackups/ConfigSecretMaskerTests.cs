@@ -18,6 +18,15 @@ public class ConfigSecretMaskerTests
     [InlineData("snmp-server community FakeCommunity RO", "snmp-server community <masked>")]
     [InlineData("snmp-server user u g v3 auth sha FakeAuth1 priv aes 128 FakePriv2", "snmp-server user u g v3 auth sha <masked> priv aes 128 <masked>")]
     [InlineData("snmp-server user u g v3 auth sha256 FakeAuth1", "snmp-server user u g v3 auth sha256 <masked>")]
+    [InlineData(" ip nhrp authentication FakeNhrp", " ip nhrp authentication <masked>")]
+    [InlineData(" ip ospf message-digest-key 1 md5 FakeOspf", " ip ospf message-digest-key 1 md5 <masked>")]
+    [InlineData(" ip ospf message-digest-key 1 md5 7 0000FAKEOSPF", " ip ospf message-digest-key 1 md5 7 <masked>")]
+    [InlineData("snmp-server host 198.51.100.7 version 2c FakeTrapComm", "snmp-server host 198.51.100.7 version 2c <masked>")]
+    [InlineData("snmp-server host 198.51.100.7 traps version 2c FakeTrapComm config", "snmp-server host 198.51.100.7 traps version 2c <masked>")]
+    [InlineData(" standby 1 authentication FakeHsrp", " standby 1 authentication <masked>")]
+    [InlineData(" standby 1 authentication text FakeHsrp", " standby 1 authentication text <masked>")]
+    [InlineData(" standby 1 authentication md5 key-string 7 0000FAKE", " standby 1 authentication md5 key-string 7 <masked>")]
+    [InlineData(" vrrp 1 authentication text FakeVrrp", " vrrp 1 authentication text <masked>")]
     public void Masks_secret_values(string line, string expected)
     {
         Assert.Equal(expected, ConfigSecretMasker.MaskLine(line));
@@ -36,6 +45,9 @@ public class ConfigSecretMaskerTests
     [InlineData("no service password-encryption")]
     [InlineData("service password-encryption")]
     [InlineData("login local")]
+    [InlineData(" tunnel key 100")]
+    [InlineData(" standby 1 authentication md5 key-chain LAB-KEYS")]
+    [InlineData(" ip ospf authentication message-digest")]
     [InlineData("!")]
     public void Leaves_other_lines_alone(string line)
     {
