@@ -3,9 +3,9 @@
 @using Yanmt.Infrastructure.Data.Entities
 @using Yanmt.Infrastructure.Monitoring
 @inject ConfigBackupService Backups
+@inject ConfigHistoryService History
 @inject AuthenticationStateProvider Auth
 
-@* Version history, diffs and downloads arrive in the next change. Only "Back up now" lives here so far. *@
 <section class="card">
     <h2>Config backups</h2>
     <dl class="details">
@@ -36,6 +36,127 @@
     <p class="muted">The scheduled backup runs on the interval set for config backups (daily by default). <code>show running-config</code> is the only command sent, and a version is stored only when the config changes.</p>
 </section>
 
+@if (_versions.Count > 0)
+{
+    <section class="card">
+        <h2>Version history</h2>
+        <div class="table-wrap">
+            <table class="grid">
+                <thead><tr><th>Captured (UTC)</th><th>Lines</th><th>Size</th><th>Hash</th><th></th></tr></thead>
+                <tbody>
+                @foreach (var v in _versions)
+                {
+                    <tr class="@(_viewing?.Id == v.Id ? "selected" : null)">
+                        <td>@v.CapturedUtc.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                        <td>@v.LineCount</td>
+                        <td>@v.RawLength bytes</td>
+                        <td class="mono">@v.ContentHash[..Math.Min(8, v.ContentHash.Length)]</td>
+                        <td>
+                            <button type="button" class="btn" @onclick="() => ViewAsync(v)">View</button>
+                            <a class="btn" href="/export/config/@NodeId/@(v.Id).txt" download>Download</a>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+        <div class="actions">
+            <a class="btn" href="/export/config/@(NodeId).zip" download>Download all (zip, secrets masked)</a>
+            @if (_isAdmin)
+            {
+                <a class="btn" href="/export/config/@(NodeId).zip?secrets=true" download
+                   title="Includes passwords and keys. The download is written to the audit log.">Download all (zip, with secrets)</a>
+            }
+        </div>
+    </section>
+
+    @if (_versions.Count > 1)
+    {
+        <section class="card">
+            <h2>Compare versions</h2>
+            <div class="actions">
+                <label>From <select @bind="_fromId">
+                    @foreach (var v in _versions) { <option value="@v.Id">@v.CapturedUtc.ToString("yyyy-MM-dd HH:mm:ss")</option> }
+                </select></label>
+                <label>To <select @bind="_toId">
+                    @foreach (var v in _versions) { <option value="@v.Id">@v.CapturedUtc.ToString("yyyy-MM-dd HH:mm:ss")</option> }
+                </select></label>
+                <label>Layout <select @bind="_layout">
+                    <option value="side">Side by side</option>
+                    <option value="unified">Unified</option>
+                </select></label>
+                <button type="button" class="btn" @onclick="CompareAsync">Compare</button>
+            </div>
+            @if (_diffError is not null) { <p class="error">@_diffError</p> }
+            @if (_diff is { } d)
+            {
+                <p class="muted">
+                    @(d.Normalized ? "Compared after removing volatile lines, so line numbers can differ from the full view." : "Compared as stored: an ignore pattern is invalid, so volatile lines may show as changes.")
+                    @(d.Revealed ? "Secrets are shown." : "Secrets are masked.")
+                </p>
+                @if (!ConfigDiffBuilder.HasChanges(d.Unified))
+                {
+                    <p>No differences.</p>
+                }
+                else if (_sideBySide)
+                {
+                    <div class="table-wrap">
+                        <table class="diff">
+                            @foreach (var row in d.SideBySide)
+                            {
+                                <tr>
+                                    <td class="num">@row.Old.Number</td>
+                                    <td class="mono diff-@row.Old.Kind.ToString().ToLowerInvariant()"><pre>@row.Old.Text</pre></td>
+                                    <td class="num">@row.New.Number</td>
+                                    <td class="mono diff-@row.New.Kind.ToString().ToLowerInvariant()"><pre>@row.New.Text</pre></td>
+                                </tr>
+                            }
+                        </table>
+                    </div>
+                }
+                else
+                {
+                    <div class="table-wrap">
+                        <table class="diff">
+                            @foreach (var line in d.Unified)
+                            {
+                                <tr class="diff-@line.Kind.ToString().ToLowerInvariant()">
+                                    <td class="num">@line.Number</td>
+                                    <td class="mono"><pre>@(line.Kind == DiffLineKind.Added ? "+ " : line.Kind == DiffLineKind.Removed ? "- " : "  ")@line.Text</pre></td>
+                                </tr>
+                            }
+                        </table>
+                    </div>
+                }
+            }
+        </section>
+    }
+
+    @if (_viewing is { } shown && _text is { } text)
+    {
+        <section class="card">
+            <h2>Version of @shown.CapturedUtc.ToString("yyyy-MM-dd HH:mm:ss") UTC</h2>
+            <div class="actions">
+                @if (_isAdmin && !text.Revealed)
+                {
+                    <button type="button" class="btn" @onclick="() => RevealAsync(shown)">Reveal secrets (audited)</button>
+                }
+                else if (text.Revealed)
+                {
+                    <button type="button" class="btn" @onclick="() => ViewAsync(shown)">Mask again</button>
+                }
+                <button type="button" class="btn" @onclick="CloseView">Close</button>
+            </div>
+            <p class="muted">@(text.Revealed ? "Secrets are shown." : "Secrets are masked.")</p>
+            <pre class="output">@text.Text</pre>
+        </section>
+    }
+}
+else
+{
+    <p class="muted">No stored versions yet.</p>
+}
+
 @code {
     [Parameter] public int NodeId { get; set; }
 
@@ -49,15 +170,64 @@
     private bool _busy;
     private bool _isAdmin;
     private int _loadedVersion = -1;
+    private List<ConfigVersionInfo> _versions = [];
+    private ConfigVersionInfo? _viewing;
+    private ConfigText? _text;
+    private long _fromId;
+    private long _toId;
+    private string _layout = "side";
+    private bool _sideBySide => _layout != "unified";
+    private ConfigDiffResult? _diff;
+    private string? _diffError;
+    private System.Security.Claims.ClaimsPrincipal _user = new();
 
     protected override async Task OnParametersSetAsync()
     {
-        _isAdmin = (await Auth.GetAuthenticationStateAsync()).User.IsInRole(YanmtRoles.Admin);
+        _user = (await Auth.GetAuthenticationStateAsync()).User;
+        _isAdmin = _user.IsInRole(YanmtRoles.Admin);
         if (_loadedVersion != Version)
         {
             _loadedVersion = Version;
-            _summary = await Backups.GetSummaryAsync(NodeId);
+            await ReloadAsync();
         }
+    }
+
+    private async Task ReloadAsync()
+    {
+        _summary = await Backups.GetSummaryAsync(NodeId);
+        _versions = await History.ListAsync(NodeId);
+        if (_versions.Count > 1 && !_versions.Any(v => v.Id == _toId) || !_versions.Any(v => v.Id == _fromId))
+        {
+            // Newest vs the one before it.
+            _toId = _versions.ElementAtOrDefault(0)?.Id ?? 0;
+            _fromId = _versions.ElementAtOrDefault(1)?.Id ?? _toId;
+        }
+    }
+
+    private async Task ViewAsync(ConfigVersionInfo v)
+    {
+        _viewing = v;
+        _text = await History.GetTextAsync(NodeId, v.Id, _user, reveal: false);
+    }
+
+    private async Task RevealAsync(ConfigVersionInfo v)
+    {
+        // The service re-checks the role and writes the audit entry; the button is only hidden from viewers.
+        _viewing = v;
+        _text = await History.GetTextAsync(NodeId, v.Id, _user, reveal: _isAdmin);
+    }
+
+    private void CloseView()
+    {
+        _viewing = null;
+        _text = null; // drop any revealed text from the circuit
+    }
+
+    private async Task CompareAsync()
+    {
+        _diffError = null;
+        _diff = await History.DiffAsync(NodeId, _fromId, _toId, _user, reveal: false);
+        _diffError = _diff is null ? "One of those versions no longer exists." : null;
     }
 
     private async Task BackUpNowAsync()
@@ -73,7 +243,7 @@
         try
         {
             _outcome = await Backups.BackupNodeAsync(NodeId, BackupTrigger.Manual);
-            _summary = await Backups.GetSummaryAsync(NodeId);
+            await ReloadAsync();
         }
         finally
         {

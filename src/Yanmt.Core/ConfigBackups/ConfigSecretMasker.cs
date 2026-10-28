@@ -72,6 +72,11 @@ public static partial class ConfigSecretMasker
             match = Community().Match(line);
         }
 
+        if (!match.Success)
+        {
+            match = ProtocolAuth().Match(line);
+        }
+
         return match.Success ? string.Concat(line.AsSpan(0, match.Groups[1].Length), Mask) : line;
     }
 
@@ -85,6 +90,12 @@ public static partial class ConfigSecretMasker
     [GeneratedRegex(@"^(\s*snmp-server\s+community\s+)\S.*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex Community();
 
+    // Group 1 = prefix up to the secret. Covers NHRP, OSPF MD5, HSRP/VRRP plain-text auth, and the
+    // community on "snmp-server host ... version 1|2c <community>". (HSRP/VRRP "md5 key-string/key-chain"
+    // is handled by KeyValue / left alone.)
+    [GeneratedRegex(@"^(\s*(?:ip\s+nhrp\s+authentication\s+|.*?\bmessage-digest-key\s+\d+\s+md5\s+(?:[07]\s+)?|snmp-server\s+host\s+.*?\bversion\s+(?:1|2c)\s+|(?:standby|vrrp)\s+(?:\d+\s+)?authentication\s+(?!md5\b)(?:text\s+)?))\S.*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex ProtocolAuth();
+
     [GeneratedRegex(@"^\s*snmp-server\s+user\s", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SnmpUser();
 
@@ -94,7 +105,7 @@ public static partial class ConfigSecretMasker
     [GeneratedRegex(@"(\bpriv\s+(?:des|3des|aes)\s*(?:\d+\s+)?(?:(?:0|7|encrypted)\s+)?)\S+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SnmpPriv();
 
-    // "key chain NAME", "key 1" (a key-chain id), "crypto key generate ...", "ip ssh pubkey-chain".
-    [GeneratedRegex(@"^\s*(?:key\s+chain\b|key\s+\d+\s*$|crypto\s+key\b|crypto\s+pki\b|ip\s+ssh\b|ip\s+domain)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    // "key chain NAME", "key 1" (a key-chain id), "tunnel key N" (an ID), "crypto key generate ...", "ip ssh pubkey-chain".
+    [GeneratedRegex(@"^\s*(?:key\s+chain\b|key\s+\d+\s*$|tunnel\s+key\b|crypto\s+key\b|crypto\s+pki\b|ip\s+ssh\b|ip\s+domain)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex NotSecret();
 }

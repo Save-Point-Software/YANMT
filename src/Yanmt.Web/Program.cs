@@ -128,6 +128,7 @@ try
     app.MapStaticAssets();
     app.MapNodeExport();
     app.MapMapBackground();
+    app.MapConfigDownloads();
     app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 
     await app.RunAsync();
