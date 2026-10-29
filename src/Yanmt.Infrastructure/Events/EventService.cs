@@ -45,9 +45,24 @@ public sealed class EventService(
         return (rows, total);
     }
 
-    /// <summary>Acknowledges one event (any signed-in user). Returns false if it doesn't exist or was already acknowledged.</summary>
-    public async Task<bool> AcknowledgeAsync(long id, CancellationToken cancellationToken = default)
+    /// <summary>Counts the unacknowledged events matching <paramref name="filter"/> (what acknowledge-all would change).</summary>
+    public async Task<int> CountUnacknowledgedAsync(EventFilter filter, CancellationToken cancellationToken = default)
     {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        return await Apply(db.Events.AsNoTracking(), filter with { UnacknowledgedOnly = true }).CountAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Acknowledges one event. Admin only; throws <see cref="UnauthorizedAccessException"/> otherwise.
+    /// Returns false if it doesn't exist or was already acknowledged.
+    /// </summary>
+    public async Task<bool> AcknowledgeAsync(long id, ClaimsPrincipal principal, CancellationToken cancellationToken = default)
+    {
+        if (!principal.IsInRole(YanmtRoles.Admin))
+        {
+            throw new UnauthorizedAccessException("Only admins can acknowledge events.");
+        }
+
         var user = await currentUser.GetNameAsync(cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var now = clock.GetUtcNow().UtcDateTime;

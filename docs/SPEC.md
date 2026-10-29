@@ -197,6 +197,7 @@ Phase 6 decisions (events, retention, export):
 - **Event retention:** events are purged after 365 days by default; the period is configurable.
 - **Config version retention:** all versions are kept by default. An optional keep-newest-N per node can be set; the latest version is never deleted.
 - **Acknowledge all:** applies to the current filter only, is admin-only, asks for confirmation, and is audited.
+- **Acknowledging events:** acknowledging events, single or all, is admin-only (enforced on the server; viewers don't see the buttons). The acknowledge-all prompt shows the number of unacknowledged events it will change.
 - **Credential export:** credential profiles only (no node-level overrides).
 - **Reboots:** unchanged from the current behavior.
 

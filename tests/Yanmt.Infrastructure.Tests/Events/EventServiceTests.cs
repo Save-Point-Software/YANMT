@@ -60,14 +60,43 @@ public class EventServiceTests
         var events = Service(test);
         var id = (await events.QueryAsync(new EventFilter(), 0, 1, Ct)).Rows[0].Id;
 
-        Assert.True(await events.AcknowledgeAsync(id, Ct));
-        Assert.False(await events.AcknowledgeAsync(id, Ct));
+        Assert.True(await events.AcknowledgeAsync(id, Admin, Ct));
+        Assert.False(await events.AcknowledgeAsync(id, Admin, Ct));
 
         var row = (await events.QueryAsync(new EventFilter(), 0, 10, Ct)).Rows.Single(r => r.Id == id);
         Assert.Equal((SystemUser.Name, true), (row.AcknowledgedBy, row.AcknowledgedUtc is not null));
         await using var db = test.Open();
         var audit = await db.AuditEntries.SingleAsync(x => x.Action == "AcknowledgeEvent", Ct);
         Assert.Equal(id.ToString(), audit.EntityKey);
+    }
+
+    [Fact]
+    public async Task Acknowledge_one_is_refused_for_viewers_and_changes_nothing()
+    {
+        await using var test = await TestDatabase.CreateAsync();
+        var a = await test.AddNodeAsync("lab-rtr-a", "192.0.2.1");
+        await AddEventsAsync(test, a, a);
+        var events = Service(test);
+        var id = (await events.QueryAsync(new EventFilter(), 0, 1, Ct)).Rows[0].Id;
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => events.AcknowledgeAsync(id, Viewer, Ct));
+
+        Assert.Equal(2, (await events.QueryAsync(new EventFilter(UnacknowledgedOnly: true), 0, 10, Ct)).Total);
+        await using var db = test.Open();
+        Assert.Empty(await db.AuditEntries.Where(x => x.Action == "AcknowledgeEvent").ToListAsync(Ct));
+    }
+
+    [Fact]
+    public async Task Count_unacknowledged_ignores_already_acknowledged_events()
+    {
+        await using var test = await TestDatabase.CreateAsync();
+        var a = await test.AddNodeAsync("lab-rtr-a", "192.0.2.1");
+        await AddEventsAsync(test, a, a);
+        var events = Service(test);
+        var id = (await events.QueryAsync(new EventFilter(), 0, 1, Ct)).Rows[0].Id;
+        await events.AcknowledgeAsync(id, Admin, Ct);
+
+        Assert.Equal(1, await events.CountUnacknowledgedAsync(new EventFilter(), Ct));
     }
 
     [Fact]

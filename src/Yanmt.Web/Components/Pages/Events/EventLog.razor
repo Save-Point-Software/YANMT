@@ -38,13 +38,13 @@
     {
         @if (_confirmAll)
         {
-            <span>Acknowledge all @_total event(s) matching this filter?</span>
+            <span>Acknowledge @_unackedCount unacknowledged event(s) matching this filter?</span>
             <button type="button" class="btn danger" disabled="@_busy" @onclick="AcknowledgeAllAsync">Yes, acknowledge all</button>
             <button type="button" class="btn" @onclick="() => _confirmAll = false">Cancel</button>
         }
         else
         {
-            <button type="button" class="btn" disabled="@(_busy || _total == 0)" @onclick="() => _confirmAll = true">Acknowledge all…</button>
+            <button type="button" class="btn" disabled="@(_busy || _total == 0)" @onclick="BeginConfirmAllAsync">Acknowledge all…</button>
         }
     }
 </div>
@@ -82,7 +82,7 @@ else
                             {
                                 <span title="@at.ToString("yyyy-MM-dd HH:mm:ss") UTC">@e.AcknowledgedBy</span>
                             }
-                            else
+                            else if (_isAdmin)
                             {
                                 <button type="button" class="btn link" disabled="@_busy" @onclick="() => AcknowledgeAsync(e.Id)">Acknowledge</button>
                             }
@@ -110,7 +110,7 @@ else
     private StatusColors _colors = StatusColors.Default;
     private string _node = "", _state = "", _source = "";
     private bool _unackedOnly, _isAdmin, _busy, _confirmAll;
-    private int _page, _total;
+    private int _page, _total, _unackedCount;
     private string? _message;
 
     protected override async Task OnInitializedAsync()
@@ -161,13 +161,27 @@ else
         _busy = true;
         try
         {
-            await Events.AcknowledgeAsync(id);
+            var user = (await Auth.GetAuthenticationStateAsync()).User;
+            await Events.AcknowledgeAsync(id, user);
             await LoadAsync();
         }
         finally
         {
             _busy = false;
         }
+    }
+
+    private async Task BeginConfirmAllAsync()
+    {
+        _unackedCount = await Events.CountUnacknowledgedAsync(Filter);
+        if (_unackedCount == 0)
+        {
+            _message = "No unacknowledged events match this filter.";
+            return;
+        }
+
+        _message = null;
+        _confirmAll = true;
     }
 
     private async Task AcknowledgeAllAsync()
