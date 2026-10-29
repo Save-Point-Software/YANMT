@@ -24,6 +24,24 @@ public sealed class InAppNotifier : INotifier
 {
     public event Action<IReadOnlyList<EventNotice>>? EventsRecorded;
 
+    /// <summary>Raised after events are acknowledged, so badges can recount. Same threading rules as above.</summary>
+    public event Action? Acknowledged;
+
+    public void RaiseAcknowledged()
+    {
+        foreach (var handler in Acknowledged?.GetInvocationList() ?? [])
+        {
+            try
+            {
+                ((Action)handler)();
+            }
+            catch (Exception)
+            {
+                // Same as NotifyAsync: a dead circuit must not break the caller.
+            }
+        }
+    }
+
     public Task NotifyAsync(IReadOnlyList<EventNotice> events, CancellationToken cancellationToken = default)
     {
         foreach (var handler in EventsRecorded?.GetInvocationList() ?? [])

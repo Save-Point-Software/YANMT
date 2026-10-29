@@ -20,7 +20,8 @@ public sealed class EventService(
     IDbContextFactory<YanmtDbContext> dbFactory,
     ICurrentUser currentUser,
     AuditLogService audit,
-    TimeProvider clock)
+    TimeProvider clock,
+    InAppNotifier notifier)
 {
     private static IQueryable<Event> Apply(IQueryable<Event> q, EventFilter f)
     {
@@ -43,6 +44,26 @@ public sealed class EventService(
                 e.OldState, e.NewState, e.Message, e.AcknowledgedBy, e.AcknowledgedUtc))
             .ToListAsync(cancellationToken);
         return (rows, total);
+    }
+
+    /// <summary>Unacknowledged Critical events across all nodes (the layout badge).</summary>
+    public async Task<int> CountUnacknowledgedCriticalAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        return await db.Events.AsNoTracking()
+            .CountAsync(e => e.NewState == Severity.Critical && e.AcknowledgedUtc == null, cancellationToken);
+    }
+
+    /// <summary>Every event matching <paramref name="filter"/>, newest first, as CSV (no secrets; same columns for any filter).</summary>
+    public async Task<string> ExportCsvAsync(EventFilter filter, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var rows = await Apply(db.Events.AsNoTracking(), filter)
+            .OrderByDescending(e => e.TimestampUtc).ThenByDescending(e => e.Id)
+            .Select(e => new { e.Id, e.TimestampUtc, Hostname = e.Node != null ? e.Node.Hostname : null, e.Source, e.OldState, e.NewState, e.Message, e.AcknowledgedBy, e.AcknowledgedUtc })
+            .ToListAsync(cancellationToken);
+        return EventCsv.Export(rows.Select(e => new EventCsvRecord(
+            e.Id, e.TimestampUtc, e.Hostname, e.Source.ToString(), e.OldState, e.NewState, e.Message, e.AcknowledgedBy, e.AcknowledgedUtc)));
     }
 
     /// <summary>Counts the unacknowledged events matching <paramref name="filter"/> (what acknowledge-all would change).</summary>
@@ -74,6 +95,7 @@ public sealed class EventService(
         }
 
         await audit.RecordAsync("AcknowledgeEvent", "Event", id.ToString(), null, cancellationToken);
+        notifier.RaiseAcknowledged();
         return true;
     }
 
@@ -96,6 +118,7 @@ public sealed class EventService(
             .ExecuteUpdateAsync(s => s.SetProperty(e => e.AcknowledgedBy, name).SetProperty(e => e.AcknowledgedUtc, now), cancellationToken);
         await audit.RecordAsync("AcknowledgeAllEvents", "Event", null,
             JsonSerializer.Serialize(new { nodeId = filter.NodeId, state = filter.State?.ToString(), source = filter.Source?.ToString(), count }), cancellationToken);
+        notifier.RaiseAcknowledged();
         return count;
     }
 }

@@ -34,6 +34,7 @@
     </select>
     <label><input type="checkbox" @bind="_unackedOnly" @bind:after="ResetAsync" /> Unacknowledged only</label>
     <span class="muted">@_total event(s)</span>
+    <a class="btn" href="@ExportUrl" download>Export CSV</a>
     @if (_isAdmin)
     {
         @if (_confirmAll)
@@ -131,6 +132,20 @@ else
         Enum.TryParse<Severity>(_state, out var st) ? st : null,
         Enum.TryParse<StatusSourceType>(_source, out var so) ? so : null,
         _unackedOnly);
+
+    private string ExportUrl
+    {
+        get
+        {
+            var f = Filter;
+            var q = new List<string>();
+            if (f.NodeId is { } n) { q.Add($"node={n}"); }
+            if (f.State is { } st) { q.Add($"state={st}"); }
+            if (f.Source is { } so) { q.Add($"source={so}"); }
+            if (f.UnacknowledgedOnly) { q.Add("unacked=true"); }
+            return "export/events.csv" + (q.Count > 0 ? "?" + string.Join('&', q) : "");
+        }
+    }
 
     private async Task LoadAsync()
     {
