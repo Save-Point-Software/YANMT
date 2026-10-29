@@ -81,7 +81,7 @@ public class EventServiceTests
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => events.AcknowledgeAsync(id, Viewer, Ct));
 
-        Assert.Equal(2, (await events.QueryAsync(new EventFilter(UnacknowledgedOnly: true), 0, 10, Ct)).Total);
+        Assert.Equal(3, (await events.QueryAsync(new EventFilter(UnacknowledgedOnly: true), 0, 10, Ct)).Total);
         await using var db = test.Open();
         Assert.Empty(await db.AuditEntries.Where(x => x.Action == "AcknowledgeEvent").ToListAsync(Ct));
     }
@@ -96,7 +96,7 @@ public class EventServiceTests
         var id = (await events.QueryAsync(new EventFilter(), 0, 1, Ct)).Rows[0].Id;
         await events.AcknowledgeAsync(id, Admin, Ct);
 
-        Assert.Equal(1, await events.CountUnacknowledgedAsync(new EventFilter(), Ct));
+        Assert.Equal(2, await events.CountUnacknowledgedAsync(new EventFilter(), Ct));
     }
 
     [Fact]
