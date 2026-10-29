@@ -1,3 +1,4 @@
+using Yanmt.Infrastructure.Events;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -56,6 +57,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<InventoryChangeSignal>();
         services.AddSingleton<StatusCache>();
         services.AddSingleton<StatusBroadcaster>();
+        services.AddSingleton<InAppNotifier>();
+        services.AddSingleton<INotifier>(sp => sp.GetRequiredService<InAppNotifier>());
+        services.AddScoped<EventService>();
         services.AddScoped<MapService>();
         services.AddSingleton<IOidNameResolver>(BuiltInOidNames.Instance);
         services.AddScoped<SnmpTargetResolver>();
@@ -79,6 +83,7 @@ public static class ServiceCollectionExtensions
             sp.CreateScope().ServiceProvider.GetRequiredService<IDbContextFactory<YanmtDbContext>>(),
             sp.GetRequiredService<StatusCache>(),
             sp.GetRequiredService<StatusBroadcaster>(),
+            sp.GetRequiredService<INotifier>(),
             sp.GetRequiredService<TimeProvider>(),
             sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<StatusEngine>>()));
         services.AddHostedService<StatusEngineService>();

@@ -9,6 +9,7 @@ using Yanmt.Core.Monitors;
 using Yanmt.Core.Status;
 using Yanmt.Infrastructure.Collectors.Icmp;
 using Yanmt.Infrastructure.Data;
+using Yanmt.Infrastructure.Events;
 using Yanmt.Infrastructure.Data.Entities;
 using Yanmt.Infrastructure.Monitors;
 
@@ -49,6 +50,7 @@ public sealed class StatusEngine(
     IDbContextFactory<YanmtDbContext> dbFactory,
     StatusCache cache,
     StatusBroadcaster broadcaster,
+    INotifier notifier,
     TimeProvider clock,
     ILogger<StatusEngine> logger)
 {
@@ -277,8 +279,30 @@ public sealed class StatusEngine(
             await ApplyMonitorsAsync(db, monitors, nodes.ToDictionary(n => n.Key, n => n.Value.Hostname), cancellationToken);
         }
 
+        var added = db.ChangeTracker.Entries<Event>().Where(e => e.State == EntityState.Added).Select(e => e.Entity).ToList();
         await db.SaveChangesAsync(cancellationToken);
         broadcaster.Publish(await cache.RefreshAsync(db, nodeIds, cancellationToken));
+        await NotifyAsync(added, cancellationToken);
+    }
+
+    /// <summary>Hands committed events to the notifier. A failing notifier never loses or blocks status updates.</summary>
+    private async Task NotifyAsync(List<Event> events, CancellationToken cancellationToken)
+    {
+        if (events.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            await notifier.NotifyAsync(
+                events.Select(e => new EventNotice(e.Id, e.TimestampUtc, e.NodeId, e.Source, e.OldState, e.NewState, e.Message)).ToList(),
+                cancellationToken);
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning(ex, "Notifier failed for {Count} event(s)", events.Count);
+        }
     }
 
     /// <summary>

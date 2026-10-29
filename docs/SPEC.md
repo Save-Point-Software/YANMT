@@ -192,6 +192,15 @@ Phase 5 decisions (config backups):
 - Show a banner or badge for unacknowledged Critical events. Events can be acknowledged, filtered by node, state, and source, and exported to CSV.
 - Route them all through one internal notifier interface so email or webhooks can be added later.
 
+Phase 6 decisions (events, retention, export):
+
+- **Event retention:** events are purged after 365 days by default; the period is configurable.
+- **Config version retention:** all versions are kept by default. An optional keep-newest-N per node can be set; the latest version is never deleted.
+- **Acknowledge all:** applies to the current filter only, is admin-only, asks for confirmation, and is audited.
+- **Acknowledging events:** acknowledging events, single or all, is admin-only (enforced on the server; viewers don't see the buttons). The acknowledge-all prompt shows the number of unacknowledged events it will change.
+- **Credential export:** credential profiles only (no node-level overrides).
+- **Reboots:** unchanged from the current behavior.
+
 ### Data retention
 
 - Raw samples kept 7 days, hourly rollups (min/avg/max) kept 90 days, both configurable.
