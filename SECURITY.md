@@ -17,12 +17,19 @@ commit, what you found, and how to reproduce it. I'll acknowledge within a week.
 - **SSH host keys are pinned** on first use. A changed key is refused until an admin explicitly trusts it.
 - **Credentials** are encrypted at rest with DPAPI (machine scope, plus entropy from an ACL-restricted
   file in the data folder). They're never logged, never written
-  to the audit log, never returned to the browser after saving, and never included in exports.
+  to the audit log, never returned to the browser after saving, and never included in CSV exports.
+  The one exception is the admin-only credential export, which is encrypted with a passphrase you
+  choose (AES-GCM, PBKDF2-SHA256) and audited without secrets. Its strength depends on that passphrase.
+- **Config backups** are encrypted at rest with DPAPI and masked for viewers; admin reveals are audited.
 - **Authentication** is Windows Integrated Authentication only. YANMT stores no web passwords.
   Access requires membership in a configured admin or viewer group (AD or local).
 - **HTTPS only.** There is no plain-HTTP listener.
 - **Least privilege.** YANMT is meant to run as a dedicated low-privilege service account or gMSA,
   not LocalSystem.
+
+## Supported versions
+
+Only the latest commit on `main` is supported until a first release is tagged.
 
 ## Scope
 

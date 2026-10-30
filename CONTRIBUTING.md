@@ -87,6 +87,15 @@ After changing EF entities, add a migration:
 dotnet ef migrations add <Name> -p src/Yanmt.Infrastructure -s src/Yanmt.Infrastructure -o Data/Migrations
 ```
 
+## Pull requests
+
+- Branch from an up-to-date `main`, keep each PR small enough to review on its own, and link the issue.
+- Run `dotnet build` and `dotnet test` before opening it, and say in the description which tests ran.
+  The Windows-only test projects run in GitHub Actions; the CML lab tests are run by the owner.
+- Add or update tests with the change. `ReadOnlyScanTests` guards the read-only rules, so never weaken
+  the SSH allowlist or those tests.
+- Update `README.md` and `docs/` when behavior or configuration changes.
+
 ## Test data hygiene
 
 - Use RFC 5737 addresses (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`) and made-up hostnames.

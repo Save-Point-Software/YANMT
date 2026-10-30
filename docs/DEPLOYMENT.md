@@ -106,8 +106,12 @@ alternative names, installed in `LocalMachine\My`. YANMT binds it itself through
 
 ```powershell
 New-NetFirewallRule -DisplayName 'YANMT web UI' -Direction Inbound -Protocol TCP -LocalPort 8443 `
-    -Action Allow -Profile Domain -RemoteAddress 192.0.2.0/24
+    -Action Allow -Profile Domain,Private -RemoteAddress 192.0.2.0/24
 ```
+
+`-Profile Domain,Private` matters on servers that aren't domain-joined: their network is usually classified
+as Private (or Public), so a rule limited to `Domain` never matches and the UI is unreachable from other
+machines. Check the profile with `Get-NetConnectionProfile`. Don't add `Public`.
 
 Use your own management subnet and the port from `Yanmt:Https:Port`. YANMT's outbound traffic needs
 ICMP echo, UDP 161 (SNMP) and TCP 22 (SSH) to the devices.

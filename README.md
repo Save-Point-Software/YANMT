@@ -8,8 +8,19 @@ nodes whose colors come from ICMP, SNMPv3, and user-defined monitors, with drill
 > to an allowlist of `show` commands enforced in code and by tests; SNMP is GET/GETNEXT/GETBULK/WALK
 > only, with no SET code path at all.
 
-**Status:** under development, phase 4 of 6 (inventory, credentials, ICMP, SNMPv3 default stats, custom monitors, the live map with link binding, and the node detail page). See
-[`docs/SPEC.md`](docs/SPEC.md) for the full v1 scope.
+**Status:** under development, phase 6 of 6 (inventory, credentials, ICMP, SNMPv3 default stats,
+custom monitors, the live map, the node detail page, config backups, the event log, hourly rollups
+with retention cleanup, and passphrase credential export/import). See
+[`docs/SPEC.md`](docs/SPEC.md) for the full v1 scope and [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
+to install it.
+
+## Install
+
+The step-by-step Windows Server guide is [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md): publish, data
+folder ACLs, service account or gMSA, certificate, `New-Service`, firewall, groups, upgrade,
+uninstall, the full configuration reference, and backup/restore (including the DPAPI caveat when
+moving to another server). On a server that isn't domain-joined, the firewall rule needs
+`-Profile Domain,Private`; the guide explains why.
 
 ## Requirements
 
@@ -18,7 +29,7 @@ nodes whose colors come from ICMP, SNMPv3, and user-defined monitors, with drill
 - Nothing else. YANMT is published as a self-contained single-file executable with the .NET runtime
   bundled. There's no IIS, database server, or runtime install.
 
-## Configuration (so far)
+## Configuration
 
 Bootstrap settings live in `appsettings.json` next to `yanmt.exe`. It never contains secrets.
 
@@ -40,8 +51,8 @@ servers that aren't domain-joined; users then sign in with local accounts over N
 resolved to SIDs at startup, and anything that doesn't resolve is logged as an error. After changing
 someone's group membership, they must sign out of Windows and back in to get a fresh token.
 
-Operational settings (status colors and ICMP polling now; SNMP intervals, thresholds, and retention
-in later phases) are edited in the UI and stored in the database. Every change is audited, and the
+Operational settings (status colors, ICMP and SNMP polling, thresholds, config backups, and data
+retention) are edited in the UI and stored in the database. Every change is audited, and the
 pollers pick up a change within a few seconds.
 
 Bootstrap polling limits live in `appsettings.json` under `Yanmt:Polling`: `IcmpConcurrency`
@@ -89,7 +100,7 @@ Click a node on the map or in the list. Its page has these tabs:
   table, such as `ifDescr.3` or `IF-MIB::ifHCInOctets`. A WALK stops at 2,000 rows. Read-only:
   YANMT has no SET.
 - **Events** for the node.
-- **Config backups** (phase 5).
+- **Config backups:** version history and diffs, with secret lines masked for viewers (see below).
 
 Viewers and admins can both use the Interfaces and SNMP query tabs, since both are read-only.
 Admins also get **Monitor this** on both tabs.
@@ -187,9 +198,32 @@ timeout, every 60 s).
   recovery is immediate.
 - **Unknown:** no data yet, or the poll itself failed on the YANMT host.
 
-State changes go to the event log; the event UI arrives in phase 6, and each node's page shows its
-recent events. Samples are stored for the charts in phase 3. Retention cleanup also arrives in
-phase 6, so until then `IcmpSamples` grows by about 288,000 rows a day per 200 nodes.
+State changes go to the event log (see below). Samples are stored for the charts and rolled up
+hourly; retention cleanup removes old ones.
+
+### Events
+
+Every state change (ICMP, default stats, custom monitors, reboots, backups, config changes) is an
+event. **Events** lists them with filters for node, state, and source, and exports the filtered
+view to CSV. A badge in the layout counts unacknowledged Critical events and updates live.
+Admins acknowledge events one by one, or **acknowledge all** for the current filter (confirmation
+prompt, audited). Everything goes through an internal notifier interface, so email or webhooks can be
+added later; v1 is in-app only.
+
+### Data retention
+
+Raw samples are kept 7 days and hourly rollups (min/avg/max) 90 days; events are purged after 365
+days. All are configurable on the Settings page, as is an optional keep-newest-N config versions
+per node (the latest is never deleted, and all versions are kept by default). A cleanup runs nightly
+around 03:00 UTC, and admins can run it on demand. Each run writes one audit entry with counts only.
+
+### Config backups
+
+YANMT pulls `show running-config` over SSH on a schedule (default daily) and on demand, strips
+volatile lines, and stores a new version only when the normalized config changed. Versions are
+encrypted at rest with DPAPI. Viewers always see secret lines masked; admins can reveal them, and
+every reveal is audited. The diff view compares any two versions, and a node's history downloads as
+a zip (masked by default).
 
 ### Map
 
@@ -215,7 +249,8 @@ SSH and SNMPv3 credentials live in reusable **credential profiles** (admin only,
 account, SYSTEM, and Administrators. Passwords are never shown again after saving, never logged, and
 never written to the audit log. **Back up `secrets.entropy` together with `yanmt.db`.** Without it, or
 on a different server, stored passwords can't be decrypted. The profile page says so, and you
-re-enter them (a passphrase export/import arrives in phase 6).
+re-enter them, or move them with the passphrase-encrypted export/import under *Credentials* (admin
+only, profiles only, audited). Treat the export file like a password vault; see `docs/DEPLOYMENT.md`.
 
 - **SNMPv3:** authPriv only. **SHA-256/AES-128** is the verified pairing on IOS-XE and the default.
   SHA-1 is offered as a *legacy* option for devices without SHA-2 auth, and only with AES-128. There's
@@ -238,9 +273,7 @@ Application event log under source `YANMT`, once the installer registers that so
 See [CONTRIBUTING.md](CONTRIBUTING.md) for dev-machine setup (SDK, gitleaks, hooks, dev certificate,
 local role groups) and how to run and test.
 
-The full Windows Server install guide and the custom-monitor guide arrive in later phases (see the spec).
-
-## CML lab setup (so far)
+## CML lab setup
 
 Any IOS-XE 17.x node reachable from the YANMT host works. Minimal config:
 
