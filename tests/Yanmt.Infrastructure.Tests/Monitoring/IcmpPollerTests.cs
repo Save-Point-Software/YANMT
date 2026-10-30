@@ -45,6 +45,9 @@ public class IcmpPollerTests
         public StatusCache Cache { get; }
         public IcmpPoller Poller { get; }
 
+        /// <summary>The probe is called before the result is submitted; wait until the poll has fully finished.</summary>
+        public Task SettledAsync() => StatusEngineTests.WaitUntilAsync(() => Poller.InFlightCount == 0);
+
         public Task TickAsync() => Poller.TickAsync(_stop.Token);
 
         public void Advance(TimeSpan by) => Test.Clock.Now += by;
@@ -112,7 +115,8 @@ public class IcmpPollerTests
         var node = await test.AddNodeAsync("lab-rtr-hub-01", "192.0.2.11");
         await using var h = new Harness(test);
         await h.TickAsync();
-        await StatusEngineTests.WaitUntilAsync(() => h.Probe.CallCount == 1);
+        await StatusEngineTests.WaitUntilAsync(() => h.Cache.Get(node)?.Sources.Count == 1);
+        await h.SettledAsync();
 
         // Turn ICMP off for the node and shorten the interval; signal as NodeService/SettingsService do.
         await using (var db = test.Open())
@@ -140,6 +144,7 @@ public class IcmpPollerTests
         await h.TickAsync();
         h.Advance(TimeSpan.FromSeconds(21));
         await StatusEngineTests.WaitUntilAsync(() => h.Probe.CallCount == 1);
+        await h.SettledAsync(); // a node still in flight is skipped, and its due slot is consumed
         await h.TickAsync();
 
         await StatusEngineTests.WaitUntilAsync(() => h.Probe.CallCount == 2);
