@@ -39,4 +39,33 @@ public class RollupServiceTests
         Assert.Equal(25, row.LossPercent, 6);
         Assert.Equal(9, row.MaxMs);
     }
+
+    [Fact]
+    public async Task Catches_up_after_a_gap_longer_than_one_run()
+    {
+        await using var test = await TestDatabase.CreateAsync();
+        var node = await test.AddNodeAsync("lab-rtr-b", "192.0.2.2");
+        var first = new DateTime(2026, 1, 8, 10, 0, 0, DateTimeKind.Utc);
+        var afterGap = first.AddHours(72 + 5); // 77 empty hours in between
+        await using (var db = test.Open())
+        {
+            foreach (var h in new[] { first, afterGap })
+            {
+                db.IcmpSamples.Add(new IcmpSample { NodeId = node, TimestampUtc = h.AddMinutes(3), Sent = 4, Received = 4, MinMs = 1, AvgMs = 2, MaxMs = 3, LossPercent = 0 });
+            }
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var service = new RollupService(test.Factory, test.Clock, NullLogger<RollupService>.Instance);
+        // Same loop as RollupWorker, bounded so a regression fails instead of hanging.
+        var runs = 0;
+        while (await service.RollUpClosedHoursAsync(Ct) >= RollupService.MaxHoursPerRun)
+        {
+            Assert.True(++runs < 10, "rollup did not catch up");
+        }
+
+        await using var read = test.Open();
+        var hours = await read.IcmpRollupHours.OrderBy(r => r.HourUtc).Select(r => r.HourUtc).ToListAsync(Ct);
+        Assert.Equal(new[] { first, afterGap }, hours);
+    }
 }

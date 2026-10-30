@@ -26,9 +26,17 @@ public sealed class RollupService(IDbContextFactory<YanmtDbContext> dbFactory, T
         if (start is null) return 0;
 
         var count = 0;
-        for (var hour = start.Value; hour < currentHour && count < MaxHoursPerRun; hour = hour.AddHours(1), count++)
+        var hour = start.Value;
+        while (hour < currentHour && count < MaxHoursPerRun)
         {
-            await RollUpHourAsync(db, hour, cancellationToken);
+            // Empty hours store no rollup rows, so skip straight to the next hour that has samples. Otherwise a
+            // long gap is rescanned from the last stored hour on every run and the catch-up loop never ends.
+            var next = await NextHourWithSamplesAsync(db, hour, cancellationToken);
+            if (next is null || next >= currentHour) break;
+
+            await RollUpHourAsync(db, next.Value, cancellationToken);
+            hour = next.Value.AddHours(1);
+            count++;
         }
         return count;
     }
@@ -44,6 +52,14 @@ public sealed class RollupService(IDbContextFactory<YanmtDbContext> dbFactory, T
         var firstMetric = await db.MetricSamples.MinAsync(s => (DateTime?)s.TimestampUtc, ct);
         var firstIcmp = await db.IcmpSamples.MinAsync(s => (DateTime?)s.TimestampUtc, ct);
         var first = firstMetric is null ? firstIcmp : firstIcmp is null ? firstMetric : (firstMetric < firstIcmp ? firstMetric : firstIcmp);
+        return first is null ? null : HourlyRollup.HourStart(first.Value);
+    }
+
+    private static async Task<DateTime?> NextHourWithSamplesAsync(YanmtDbContext db, DateTime from, CancellationToken ct)
+    {
+        var metric = await db.MetricSamples.Where(s => s.TimestampUtc >= from).MinAsync(s => (DateTime?)s.TimestampUtc, ct);
+        var icmp = await db.IcmpSamples.Where(s => s.TimestampUtc >= from).MinAsync(s => (DateTime?)s.TimestampUtc, ct);
+        var first = metric is null ? icmp : icmp is null ? metric : (metric < icmp ? metric : icmp);
         return first is null ? null : HourlyRollup.HourStart(first.Value);
     }
 
