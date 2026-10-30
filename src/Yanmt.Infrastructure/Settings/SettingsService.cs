@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Yanmt.Core.ConfigBackups;
 using Yanmt.Core.Monitoring;
+using Yanmt.Core.Retention;
 using Yanmt.Core.Status;
 using Yanmt.Infrastructure.Data;
 using Yanmt.Infrastructure.Data.Entities;
@@ -18,6 +19,7 @@ public static class SettingKeys
     public static readonly SettingKey<IcmpSettings> Icmp = new("polling.icmp", new IcmpSettings());
     public static readonly SettingKey<SnmpSettings> Snmp = new("polling.snmp", new SnmpSettings());
     public static readonly SettingKey<ConfigBackupSettings> ConfigBackup = new("backup.config", new ConfigBackupSettings());
+    public static readonly SettingKey<RetentionSettings> Retention = new("retention", new RetentionSettings());
 }
 
 /// <summary>

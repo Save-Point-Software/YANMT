@@ -1,7 +1,11 @@
 @page "/settings"
 @using Yanmt.Core.ConfigBackups
 @using Yanmt.Core.Monitoring
+@using Yanmt.Core.Retention
 @inject SettingsService Settings
+@inject Yanmt.Infrastructure.Retention.RetentionService Retention
+@inject Yanmt.Infrastructure.Data.ICurrentUser CurrentUser
+@inject ILogger<SettingsPage> Logger
 @inject AuthenticationStateProvider Auth
 
 <PageTitle>Settings - YANMT</PageTitle>
@@ -192,7 +196,67 @@
         }
     </section>
 
-    <p class="muted">Retention settings are added here in Phase 6.</p>
+    <section class="card">
+        <h2>Data retention</h2>
+        <p class="muted">
+            A nightly cleanup (about 03:00 UTC) deletes data past these limits, then optimizes the database (and compacts it when a lot of space is free). Raw samples
+            are only deleted after they have been rolled up into hourly min/avg/max. Config versions are all kept unless
+            a limit is set; the newest version of each node is never deleted.
+        </p>
+        <div class="field-row">
+            <div class="field narrow-field">
+                <label for="ret-raw">Raw samples (days)</label>
+                <input id="ret-raw" type="number" @bind="_retRaw" disabled="@(!_isAdmin)" />
+            </div>
+            <div class="field narrow-field">
+                <label for="ret-rollup">Hourly rollups (days)</label>
+                <input id="ret-rollup" type="number" @bind="_retRollup" disabled="@(!_isAdmin)" />
+            </div>
+            <div class="field narrow-field">
+                <label for="ret-events">Events (days)</label>
+                <input id="ret-events" type="number" @bind="_retEvents" disabled="@(!_isAdmin)" />
+            </div>
+            <div class="field narrow-field">
+                <label for="ret-versions">Config versions to keep per node (empty = all)</label>
+                <input id="ret-versions" type="number" @bind="_retVersions" disabled="@(!_isAdmin)" />
+            </div>
+        </div>
+
+        @foreach (var (_, error) in _retErrors)
+        {
+            <p class="error">@error</p>
+        }
+
+        @if (_isAdmin)
+        {
+            <div class="form-actions">
+                <button class="btn primary" @onclick="SaveRetentionAsync">Save retention settings</button>
+                <button class="btn" @onclick="() => { LoadRetention(new RetentionSettings()); _retSaved = false; }">Reset to defaults</button>
+                @if (_retSaved)
+                {
+                    <span class="success">Saved. Applies at the next nightly cleanup.</span>
+                }
+            </div>
+            <div class="form-actions">
+                <button class="btn" disabled="@_retRunning" @onclick="RunCleanupAsync">Run cleanup now</button>
+                @if (_retRunning)
+                {
+                    <span class="muted">Running…</span>
+                }
+                @if (_retResult is { } r)
+                {
+                    <span class="success">
+                        Deleted @r.RawSamples raw samples, @r.Rollups rollups, @r.Events events, @r.ConfigVersions config versions@(r.Vacuumed ? "; database compacted" : "").
+                    </span>
+                }
+                @if (_retRunError is not null)
+                {
+                    <span class="error">@_retRunError</span>
+                }
+            </div>
+            <p class="muted">Uses the saved settings.</p>
+        }
+    </section>
 </div>
 
 @code {
@@ -217,6 +281,65 @@
         _icmp = new IcmpForm(await Settings.GetAsync(SettingKeys.Icmp));
         _snmp = new SnmpForm(await Settings.GetAsync(SettingKeys.Snmp));
         LoadBackup(await Settings.GetAsync(SettingKeys.ConfigBackup));
+        LoadRetention(await Settings.GetAsync(SettingKeys.Retention));
+    }
+
+    private int _retRaw, _retRollup, _retEvents;
+    private int? _retVersions;
+    private IReadOnlyList<(string Field, string Error)> _retErrors = [];
+    private bool _retSaved;
+    private bool _retRunning;
+    private Yanmt.Infrastructure.Retention.RetentionResult? _retResult;
+    private string? _retRunError;
+
+    private async Task RunCleanupAsync()
+    {
+        if (!_isAdmin || _retRunning)
+        {
+            return;
+        }
+
+        _retRunning = true;
+        _retResult = null;
+        _retRunError = null;
+        try
+        {
+            _retResult = await Retention.RunAsync(await CurrentUser.GetNameAsync());
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Manual retention cleanup failed");
+            _retRunError = "Cleanup failed; see the log.";
+        }
+        finally
+        {
+            _retRunning = false;
+        }
+    }
+
+    private void LoadRetention(RetentionSettings s)
+    {
+        _retRaw = s.RawSampleDays;
+        _retRollup = s.RollupDays;
+        _retEvents = s.EventDays;
+        _retVersions = s.KeepConfigVersions;
+    }
+
+    private async Task SaveRetentionAsync()
+    {
+        _retSaved = false;
+        var settings = new RetentionSettings
+        {
+            RawSampleDays = _retRaw, RollupDays = _retRollup, EventDays = _retEvents, KeepConfigVersions = _retVersions,
+        };
+        _retErrors = settings.Validate();
+        if (!_isAdmin || _retErrors.Count > 0)
+        {
+            return;
+        }
+
+        await Settings.SetAsync(SettingKeys.Retention, settings);
+        _retSaved = true;
     }
 
     private bool _backupEnabled = true;

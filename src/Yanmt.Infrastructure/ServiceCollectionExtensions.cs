@@ -98,6 +98,17 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<TimeProvider>(),
             sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Yanmt.Infrastructure.Rollups.RollupService>>()));
         services.AddHostedService<Yanmt.Infrastructure.Rollups.RollupWorker>();
+        services.AddSingleton(sp =>
+        {
+            var scope = sp.CreateScope().ServiceProvider;
+            var settings = scope.GetRequiredService<SettingsService>();
+            return new Yanmt.Infrastructure.Retention.RetentionService(
+                scope.GetRequiredService<IDbContextFactory<YanmtDbContext>>(),
+                ct => settings.GetAsync(SettingKeys.Retention, ct),
+                sp.GetRequiredService<TimeProvider>(),
+                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Yanmt.Infrastructure.Retention.RetentionService>>());
+        });
+        services.AddHostedService<Yanmt.Infrastructure.Retention.RetentionWorker>();
         return services;
     }
 }
