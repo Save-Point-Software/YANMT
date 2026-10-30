@@ -20,6 +20,8 @@ public class YanmtDbContext(DbContextOptions<YanmtDbContext> options) : DbContex
     public DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
     public DbSet<IcmpSample> IcmpSamples => Set<IcmpSample>();
     public DbSet<MetricSample> MetricSamples => Set<MetricSample>();
+    public DbSet<MetricRollupHour> MetricRollupHours => Set<MetricRollupHour>();
+    public DbSet<IcmpRollupHour> IcmpRollupHours => Set<IcmpRollupHour>();
     public DbSet<NodeSystemInfo> NodeSystemInfo => Set<NodeSystemInfo>();
     public DbSet<Map> Maps => Set<Map>();
     public DbSet<MonitorDefinition> MonitorDefinitions => Set<MonitorDefinition>();
@@ -117,6 +119,20 @@ public class YanmtDbContext(DbContextOptions<YanmtDbContext> options) : DbContex
         {
             e.HasIndex(x => new { x.StatusSourceId, x.TimestampUtc });
             e.HasOne(x => x.StatusSource).WithMany().HasForeignKey(x => x.StatusSourceId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<MetricRollupHour>(e =>
+        {
+            e.HasIndex(x => new { x.StatusSourceId, x.HourUtc }).IsUnique();
+            e.HasIndex(x => x.HourUtc);
+            e.HasOne(x => x.StatusSource).WithMany().HasForeignKey(x => x.StatusSourceId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<IcmpRollupHour>(e =>
+        {
+            e.HasIndex(x => new { x.NodeId, x.HourUtc }).IsUnique();
+            e.HasIndex(x => x.HourUtc);
+            e.HasOne(x => x.Node).WithMany().HasForeignKey(x => x.NodeId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<NodeSystemInfo>(e =>

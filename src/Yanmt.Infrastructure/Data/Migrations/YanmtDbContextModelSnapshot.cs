@@ -194,6 +194,49 @@ namespace Yanmt.Infrastructure.Data.Migrations
                     b.ToTable("Events");
                 });
 
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.IcmpRollupHour", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<double?>("AvgMs")
+                        .HasColumnType("REAL");
+
+                    b.Property<DateTime>("HourUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<double>("LossPercent")
+                        .HasColumnType("REAL");
+
+                    b.Property<double?>("MaxMs")
+                        .HasColumnType("REAL");
+
+                    b.Property<double?>("MinMs")
+                        .HasColumnType("REAL");
+
+                    b.Property<int>("NodeId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Received")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("SampleCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Sent")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("HourUtc");
+
+                    b.HasIndex("NodeId", "HourUtc")
+                        .IsUnique();
+
+                    b.ToTable("IcmpRollupHours");
+                });
+
             modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.IcmpSample", b =>
                 {
                     b.Property<long>("Id")
@@ -358,6 +401,40 @@ namespace Yanmt.Infrastructure.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("MapLinks");
+                });
+
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.MetricRollupHour", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<double>("Avg")
+                        .HasColumnType("REAL");
+
+                    b.Property<DateTime>("HourUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<double>("Max")
+                        .HasColumnType("REAL");
+
+                    b.Property<double>("Min")
+                        .HasColumnType("REAL");
+
+                    b.Property<int>("SampleCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("StatusSourceId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("HourUtc");
+
+                    b.HasIndex("StatusSourceId", "HourUtc")
+                        .IsUnique();
+
+                    b.ToTable("MetricRollupHours");
                 });
 
             modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.MetricSample", b =>
@@ -847,6 +924,17 @@ namespace Yanmt.Infrastructure.Data.Migrations
                     b.Navigation("Node");
                 });
 
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.IcmpRollupHour", b =>
+                {
+                    b.HasOne("Yanmt.Infrastructure.Data.Entities.Node", "Node")
+                        .WithMany()
+                        .HasForeignKey("NodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Node");
+                });
+
             modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.IcmpSample", b =>
                 {
                     b.HasOne("Yanmt.Infrastructure.Data.Entities.Node", "Node")
@@ -925,6 +1013,17 @@ namespace Yanmt.Infrastructure.Data.Migrations
                     b.Navigation("Map");
 
                     b.Navigation("To");
+                });
+
+            modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.MetricRollupHour", b =>
+                {
+                    b.HasOne("Yanmt.Infrastructure.Data.Entities.StatusSource", "StatusSource")
+                        .WithMany()
+                        .HasForeignKey("StatusSourceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("StatusSource");
                 });
 
             modelBuilder.Entity("Yanmt.Infrastructure.Data.Entities.MetricSample", b =>
