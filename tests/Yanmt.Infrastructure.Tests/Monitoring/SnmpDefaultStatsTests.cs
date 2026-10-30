@@ -408,6 +408,44 @@ public class NodeDetailServiceTests
     }
 
     [Fact]
+    public async Task Long_ranges_read_rollups_and_raw_samples_after_the_last_rolled_hour()
+    {
+        await using var test = await TestDatabase.CreateAsync();
+        var node = await test.AddNodeAsync("lab-rtr-hub-01", "192.0.2.11");
+        var now = test.Clock.GetUtcNow().UtcDateTime;
+        var lastHour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0, DateTimeKind.Utc).AddHours(-3);
+        await using (var db = test.Open())
+        {
+            var cpu = new StatusSource { NodeId = node, SourceType = StatusSourceType.Cpu, SinceUtc = now };
+            db.StatusSources.Add(cpu);
+            // Rollups only 20 days back; raw samples exist for the same hour (must not double count) and after it.
+            for (var d = 20; d >= 0; d--)
+            {
+                var hour = lastHour.AddDays(-d);
+                db.MetricRollupHours.Add(new MetricRollupHour { StatusSource = cpu, HourUtc = hour, Min = 10, Avg = 20, Max = 30, SampleCount = 12 });
+                db.IcmpRollupHours.Add(new IcmpRollupHour { NodeId = node, HourUtc = hour, Sent = 240, Received = 238, MinMs = 1, AvgMs = 5, MaxMs = 9, LossPercent = 50, SampleCount = 60 });
+            }
+
+            db.MetricSamples.Add(new MetricSample { StatusSource = cpu, TimestampUtc = lastHour.AddMinutes(5), Value = 99 }); // already rolled up
+            db.MetricSamples.Add(new MetricSample { StatusSource = cpu, TimestampUtc = now.AddMinutes(-10), Value = 60 });
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var service = new NodeDetailService(test.Factory, new SettingsService(test.Factory, test.Clock), test.Clock);
+        var month = await service.GetChartsAsync(node, ChartRange.Month, Ct);
+
+        Assert.Equal(30, month.Cpu.Max(b => b.Max)); // the raw 99 inside a rolled hour is ignored
+        Assert.Equal(60, month.Cpu[^1].Avg); // raw tail after the last rolled hour
+        Assert.Equal(50, month.Loss.Max(b => b.Max));
+        Assert.Equal(5, month.Latency[0].Avg);
+        Assert.True(month.FromUtc <= now.AddDays(-30));
+
+        var week = await service.GetChartsAsync(node, ChartRange.Week, Ct);
+        Assert.Equal(99, week.Cpu.Max(b => b.Max)); // short ranges stay on raw samples
+        Assert.Empty(week.Latency);
+    }
+
+    [Fact]
     public async Task Effective_thresholds_combine_node_overrides_with_settings()
     {
         await using var test = await TestDatabase.CreateAsync();

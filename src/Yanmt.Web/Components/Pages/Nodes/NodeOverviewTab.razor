@@ -80,7 +80,7 @@
     [Parameter] public int Version { get; set; }
 
     private static readonly (ChartRange Range, string Label)[] Ranges =
-        [(ChartRange.Hour, "1 h"), (ChartRange.SixHours, "6 h"), (ChartRange.Day, "24 h"), (ChartRange.Week, "7 d")];
+        [(ChartRange.Hour, "1 h"), (ChartRange.SixHours, "6 h"), (ChartRange.Day, "24 h"), (ChartRange.Week, "7 d"), (ChartRange.Month, "30 d"), (ChartRange.Quarter, "90 d")];
 
     private ChartRange _range = ChartRange.SixHours;
     private NodeCharts? _charts;
@@ -102,7 +102,7 @@
             _loaded = (NodeId, Version);
             (_cpu, _memory, _snmpInterval, _icmpInterval) = await Detail.GetPollingAsync(NodeId);
             _charts = await Detail.GetChartsAsync(NodeId, _range);
-            (_trendFrom, _trendTo, _trends) = await Detail.GetTrendsAsync(NodeId);
+            (_trendFrom, _trendTo, _trends) = await Detail.GetTrendsAsync(NodeId, _range);
         }
     }
 
@@ -110,6 +110,7 @@
     {
         _range = range;
         _charts = await Detail.GetChartsAsync(NodeId, _range);
+        (_trendFrom, _trendTo, _trends) = await Detail.GetTrendsAsync(NodeId, _range);
     }
 
     private static IReadOnlyList<LineChart.ChartSeries> One(string label, IReadOnlyList<Yanmt.Core.Charts.Bucket> points, string css, bool band = false, bool useMax = false) =>
