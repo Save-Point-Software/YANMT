@@ -275,5 +275,5 @@ Other notes for a new server:
 
 - The ICMP, SNMP and SSH paths from the new server must be allowed by device ACLs and the management firewall.
 - SSH host keys are pinned per node (trust on first use) and stay in the database, so devices keep matching.
-  If a device's key legitimately changed, re-pin it from the node's settings.
+  If a device's key legitimately changed, use "Forget" next to the pinned host key in the node's connection tests, then reconnect to pin the new one.
 - Repeat section 2 (service account, certificate, groups, firewall) on the new server.
