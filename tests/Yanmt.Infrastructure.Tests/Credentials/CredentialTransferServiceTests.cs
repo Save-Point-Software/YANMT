@@ -94,6 +94,35 @@ public class CredentialTransferServiceTests
         Assert.Empty(await dstSvc.ListAsync(Ct));
     }
 
+    [Theory]
+    [InlineData(ImportConflict.Skip)]
+    [InlineData(ImportConflict.Overwrite)]
+    public async Task Name_differing_only_in_case_is_skipped_and_reported_not_failed(ImportConflict conflict)
+    {
+        await using var source = await TestDatabase.CreateAsync();
+        var (srcSvc, srcTransfer) = Services(source);
+        await SeedAsync(srcSvc);
+        var file = (await srcTransfer.ExportAsync(Admin, Pass, Iterations, Ct)).File;
+
+        await using var target = await TestDatabase.CreateAsync();
+        var (dstSvc, dstTransfer) = Services(target);
+        Assert.True((await dstSvc.CreateAsync(new CredentialEditModel
+        {
+            Name = "LAB-SSH", Kind = CredentialKind.Ssh, Username = "other", Port = 22, Password = "keep-me-please-01",
+        }, Ct)).Ok);
+
+        var result = await dstTransfer.ImportAsync(Admin, file, Pass, conflict, Ct);
+
+        Assert.True(result.Ok, result.Error);
+        Assert.Equal(1, result.Created);
+        Assert.Equal(0, result.Updated);
+        Assert.Contains(result.Skipped, s => s.StartsWith("lab-ssh") && s.Contains("LAB-SSH"));
+        var all = await dstSvc.ListAsync(Ct);
+        Assert.Equal(2, all.Count);
+        var kept = all.Single(p => p.Name == "LAB-SSH");
+        Assert.Equal("keep-me-please-01", (await dstSvc.LoadSshAsync(kept.Id, Ct))!.Password);
+    }
+
     [Fact]
     public async Task Existing_names_are_kept_or_overwritten_as_asked()
     {
