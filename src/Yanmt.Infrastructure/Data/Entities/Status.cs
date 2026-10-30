@@ -69,6 +69,35 @@ public class MetricSample
     public double Value { get; set; }
 }
 
+/// <summary>Min/avg/max of a status source's numeric samples for one closed UTC hour.</summary>
+public class MetricRollupHour
+{
+    public long Id { get; set; }
+    public long StatusSourceId { get; set; }
+    public StatusSource StatusSource { get; set; } = null!;
+    public DateTime HourUtc { get; set; }
+    public double Min { get; set; }
+    public double Avg { get; set; }
+    public double Max { get; set; }
+    public int SampleCount { get; set; }
+}
+
+/// <summary>ICMP latency and loss of a node for one closed UTC hour.</summary>
+public class IcmpRollupHour
+{
+    public long Id { get; set; }
+    public int NodeId { get; set; }
+    public Node Node { get; set; } = null!;
+    public DateTime HourUtc { get; set; }
+    public int Sent { get; set; }
+    public int Received { get; set; }
+    public double? MinMs { get; set; }
+    public double? AvgMs { get; set; }
+    public double? MaxMs { get; set; }
+    public double LossPercent { get; set; }
+    public int SampleCount { get; set; }
+}
+
 /// <summary>A state change from any source. Acknowledgement and the event UI arrive in Phase 6.</summary>
 public class Event
 {

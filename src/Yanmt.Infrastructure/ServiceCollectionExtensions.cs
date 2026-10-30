@@ -92,6 +92,8 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<SnmpPoller>();
         services.AddHostedService<MonitorPoller>();
         services.AddHostedService<ConfigBackupPoller>();
+        services.AddSingleton<Yanmt.Infrastructure.Rollups.RollupService>();
+        services.AddHostedService<Yanmt.Infrastructure.Rollups.RollupWorker>();
         return services;
     }
 }
