@@ -35,7 +35,7 @@ public class RetentionServiceTests
             await db.SaveChangesAsync(Ct);
         }
 
-        var result = await Create(test, new RetentionSettings()).RunAsync(Ct);
+        var result = await Create(test, new RetentionSettings()).RunAsync(ct: Ct);
 
         Assert.Equal(1, result.RawSamples);
         Assert.Equal(1, result.Rollups);
@@ -58,7 +58,7 @@ public class RetentionServiceTests
             await db.SaveChangesAsync(Ct);
         }
 
-        var result = await Create(test, new RetentionSettings()).RunAsync(Ct);
+        var result = await Create(test, new RetentionSettings()).RunAsync(ct: Ct);
 
         Assert.Equal(0, result.RawSamples);
         await using var read = test.Open();
@@ -83,14 +83,41 @@ public class RetentionServiceTests
             await db.SaveChangesAsync(Ct);
         }
 
-        Assert.Equal(0, (await Create(test, new RetentionSettings()).RunAsync(Ct)).ConfigVersions);
+        Assert.Equal(0, (await Create(test, new RetentionSettings()).RunAsync(ct: Ct)).ConfigVersions);
 
-        var result = await Create(test, new RetentionSettings { KeepConfigVersions = 2 }).RunAsync(Ct);
+        var result = await Create(test, new RetentionSettings { KeepConfigVersions = 2 }).RunAsync(ct: Ct);
 
         Assert.Equal(3, result.ConfigVersions);
         await using var read = test.Open();
         var kept = await read.ConfigVersions.Select(v => v.ContentHash).OrderBy(h => h).ToListAsync(Ct);
         Assert.Equal(["a0", "a1", "b0"], kept); // newest per node survives, even when old
+    }
+
+    [Fact]
+    public async Task Each_run_writes_one_audit_entry_with_counts_only_and_skips_vacuum_when_little_is_free()
+    {
+        await using var test = await TestDatabase.CreateAsync();
+        var node = await test.AddNodeAsync("lab-rtr-a", "192.0.2.1");
+        var now = test.Clock.GetUtcNow().UtcDateTime;
+        await using (var db = test.Open())
+        {
+            db.Events.Add(new Event { TimestampUtc = now.AddDays(-400), NodeId = node, NewState = Severity.Critical, Message = "secret-looking row text" });
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var service = Create(test, new RetentionSettings());
+        var result = await service.RunAsync(@"LAB\admin", Ct);
+        await service.RunAsync(ct: Ct);
+
+        Assert.False(result.Vacuumed);
+        await using var read = test.Open();
+        var entries = await read.AuditEntries.Where(a => a.Action == "RetentionCleanup").OrderBy(a => a.Id).ToListAsync(Ct);
+        Assert.Equal(2, entries.Count);
+        Assert.Equal(@"LAB\admin", entries[0].User);
+        Assert.Equal("system", entries[1].User);
+        Assert.Contains("\"events\":1", entries[0].Changes);
+        Assert.Contains("\"events\":0", entries[1].Changes);
+        Assert.DoesNotContain("secret-looking", entries[0].Changes);
     }
 
     [Fact]

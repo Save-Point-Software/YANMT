@@ -3,6 +3,9 @@
 @using Yanmt.Core.Monitoring
 @using Yanmt.Core.Retention
 @inject SettingsService Settings
+@inject Yanmt.Infrastructure.Retention.RetentionService Retention
+@inject Yanmt.Infrastructure.Data.ICurrentUser CurrentUser
+@inject ILogger<SettingsPage> Logger
 @inject AuthenticationStateProvider Auth
 
 <PageTitle>Settings - YANMT</PageTitle>
@@ -196,7 +199,7 @@
     <section class="card">
         <h2>Data retention</h2>
         <p class="muted">
-            A nightly cleanup (about 03:00 UTC) deletes data past these limits, then compacts the database. Raw samples
+            A nightly cleanup (about 03:00 UTC) deletes data past these limits, then optimizes the database (and compacts it when a lot of space is free). Raw samples
             are only deleted after they have been rolled up into hourly min/avg/max. Config versions are all kept unless
             a limit is set; the newest version of each node is never deleted.
         </p>
@@ -234,6 +237,24 @@
                     <span class="success">Saved. Applies at the next nightly cleanup.</span>
                 }
             </div>
+            <div class="form-actions">
+                <button class="btn" disabled="@_retRunning" @onclick="RunCleanupAsync">Run cleanup now</button>
+                @if (_retRunning)
+                {
+                    <span class="muted">Running…</span>
+                }
+                @if (_retResult is { } r)
+                {
+                    <span class="success">
+                        Deleted @r.RawSamples raw samples, @r.Rollups rollups, @r.Events events, @r.ConfigVersions config versions@(r.Vacuumed ? "; database compacted" : "").
+                    </span>
+                }
+                @if (_retRunError is not null)
+                {
+                    <span class="error">@_retRunError</span>
+                }
+            </div>
+            <p class="muted">Uses the saved settings.</p>
         }
     </section>
 </div>
@@ -267,6 +288,34 @@
     private int? _retVersions;
     private IReadOnlyList<(string Field, string Error)> _retErrors = [];
     private bool _retSaved;
+    private bool _retRunning;
+    private Yanmt.Infrastructure.Retention.RetentionResult? _retResult;
+    private string? _retRunError;
+
+    private async Task RunCleanupAsync()
+    {
+        if (!_isAdmin || _retRunning)
+        {
+            return;
+        }
+
+        _retRunning = true;
+        _retResult = null;
+        _retRunError = null;
+        try
+        {
+            _retResult = await Retention.RunAsync(await CurrentUser.GetNameAsync());
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Manual retention cleanup failed");
+            _retRunError = "Cleanup failed; see the log.";
+        }
+        finally
+        {
+            _retRunning = false;
+        }
+    }
 
     private void LoadRetention(RetentionSettings s)
     {

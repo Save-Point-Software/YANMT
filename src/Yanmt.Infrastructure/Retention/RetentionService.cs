@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -7,20 +8,38 @@ using Yanmt.Infrastructure.Settings;
 
 namespace Yanmt.Infrastructure.Retention;
 
-public sealed record RetentionResult(int RawSamples, int Rollups, int Events, int ConfigVersions)
+public sealed record RetentionResult(int RawSamples, int Rollups, int Events, int ConfigVersions, bool Vacuumed = false)
 {
     public int Total => RawSamples + Rollups + Events + ConfigVersions;
 }
 
 /// <summary>
-/// Purges data past its retention period, then runs <c>PRAGMA optimize</c> (and <c>VACUUM</c> when rows were deleted).
+/// Purges data past its retention period, then runs <c>PRAGMA optimize</c> (always) and <c>VACUUM</c> (only when
+/// <see cref="VacuumPolicy"/> says the free space is large). Writes one audit entry per run with the counts per type.
 /// Raw samples are never purged beyond the newest rolled-up hour. The newest config version of a node is never deleted.
 /// </summary>
 public sealed class RetentionService(
     IDbContextFactory<YanmtDbContext> dbFactory, Func<CancellationToken, Task<RetentionSettings>> loadSettings,
     TimeProvider clock, ILogger<RetentionService> logger)
 {
-    public async Task<RetentionResult> RunAsync(CancellationToken ct = default)
+    private readonly SemaphoreSlim _gate = new(1, 1);
+
+    /// <param name="user">Who triggered the run: an account name for a manual run, "system" for the nightly one.</param>
+    public async Task<RetentionResult> RunAsync(string user = "system", CancellationToken ct = default)
+    {
+        // A manual run during the nightly one waits instead of doubling up the deletes and VACUUM.
+        await _gate.WaitAsync(ct);
+        try
+        {
+            return await RunCoreAsync(user, ct);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private async Task<RetentionResult> RunCoreAsync(string user, CancellationToken ct)
     {
         var settings = await loadSettings(ct);
         if (settings.Validate().Count > 0)
@@ -51,18 +70,56 @@ public sealed class RetentionService(
 
         var versions = settings.KeepConfigVersions is { } keep ? await PurgeConfigVersionsAsync(db, keep, ct) : 0;
 
-        var result = new RetentionResult(raw, rollups, events, versions);
-        logger.LogInformation(
-            "Retention: purged {Raw} raw samples, {Rollups} rollups, {Events} events, {Versions} config versions",
-            raw, rollups, events, versions);
-
         await db.Database.ExecuteSqlRawAsync("PRAGMA optimize;", ct);
-        if (result.Total > 0)
+        var vacuum = VacuumPolicy.ShouldVacuum(await PragmaAsync(db, "freelist_count", ct), await PragmaAsync(db, "page_count", ct));
+        if (vacuum)
         {
             await db.Database.ExecuteSqlRawAsync("VACUUM;", ct);
         }
 
+        var result = new RetentionResult(raw, rollups, events, versions, vacuum);
+        logger.LogInformation(
+            "Retention: purged {Raw} raw samples, {Rollups} rollups, {Events} events, {Versions} config versions; vacuumed: {Vacuumed}",
+            raw, rollups, events, versions, vacuum);
+
+        // Counts only, never row data. AuditEntry is not IAudited, so the interceptor adds nothing further.
+        db.AuditEntries.Add(new Data.Entities.AuditEntry
+        {
+            TimestampUtc = now,
+            User = user,
+            Action = "RetentionCleanup",
+            EntityType = "Retention",
+            Changes = JsonSerializer.Serialize(new
+            {
+                rawSamples = raw, rollups, events, configVersions = versions, vacuumed = vacuum,
+            }),
+        });
+        await db.SaveChangesAsync(ct);
         return result;
+    }
+
+    private static async Task<long> PragmaAsync(YanmtDbContext db, string pragma, CancellationToken ct)
+    {
+        var connection = db.Database.GetDbConnection();
+        var wasClosed = connection.State != System.Data.ConnectionState.Open;
+        if (wasClosed)
+        {
+            await connection.OpenAsync(ct);
+        }
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"PRAGMA {pragma};";
+            return Convert.ToInt64(await command.ExecuteScalarAsync(ct));
+        }
+        finally
+        {
+            if (wasClosed)
+            {
+                await connection.CloseAsync();
+            }
+        }
     }
 
     private static async Task<int> PurgeConfigVersionsAsync(YanmtDbContext db, int keep, CancellationToken ct)
@@ -103,7 +160,7 @@ public sealed class RetentionWorker(RetentionService service, TimeProvider clock
             try
             {
                 await Task.Delay(UntilNextRun(clock.GetUtcNow().UtcDateTime), clock, stoppingToken);
-                await service.RunAsync(stoppingToken);
+                await service.RunAsync(ct: stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

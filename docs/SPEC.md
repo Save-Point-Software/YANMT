@@ -204,7 +204,8 @@ Phase 6 decisions (events, retention, export):
 ### Data retention
 
 - Raw samples kept 7 days, hourly rollups (min/avg/max) kept 90 days, both configurable.
-- Run a nightly cleanup (about 03:00 UTC) and SQLite `VACUUM`/`optimize`. Raw samples are never purged beyond the newest rolled-up hour.
+- Run a nightly cleanup (about 03:00 UTC) and SQLite `PRAGMA optimize` every run. `VACUUM` runs only when free space is large (`freelist_count / page_count` above 25%), because it locks the database well past the pollers' 5 s `busy_timeout` on a big database. Raw samples are never purged beyond the newest rolled-up hour.
+- Admins can run the cleanup on demand ("Run cleanup now" on the Data retention card), which shows the counts deleted. Every run, nightly or manual, writes one audit entry with the counts per type (raw samples, rollups, events, config versions) and whether it vacuumed. No row data.
 
 ## Non-functional requirements
 
