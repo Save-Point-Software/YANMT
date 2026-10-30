@@ -47,6 +47,7 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<SecretProtector>();
         services.AddScoped<CredentialService>();
+        services.AddScoped<CredentialTransferService>();
         services.AddSingleton<IIcmpProbe, IcmpProbe>();
         services.AddSingleton<ISnmpReader, SnmpV3Reader>();
         services.AddSingleton<ReadOnlySshCollector>();

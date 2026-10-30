@@ -213,6 +213,14 @@ public sealed class CredentialService(IDbContextFactory<YanmtDbContext> dbFactor
             .ToDictionary(g => g.Key, g => g.Count());
     }
 
+    /// <summary>For export: the decrypted secrets, or null when unreadable on this server.</summary>
+    internal (string? Password, string? AuthPassword, string? PrivPassword)? TryReadPlain(byte[] blob) =>
+        TryReadSecrets(blob, out var s) && s is not null ? (s.Password, s.AuthPassword, s.PrivPassword) : null;
+
+    /// <summary>For import: DPAPI-protects secrets exactly as a form save would.</summary>
+    internal byte[] ProtectPlain(string? password, string? authPassword, string? privPassword) =>
+        Protect(new SecretBag(password, authPassword, privPassword));
+
     private byte[] Protect(SecretBag secrets) => protector.Protect(JsonSerializer.SerializeToUtf8Bytes(secrets));
 
     private SecretBag ReadSecrets(byte[] blob)
