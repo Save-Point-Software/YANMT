@@ -301,6 +301,8 @@ The SHA-2 keyword differs between IOS-XE releases. Check `snmp-server user x YAN
 your image. SNMPv3 passwords must be at least 8 characters. `snmp-server user` lines don't appear in
 `show running-config`; check them with `show snmp user`.
 
+Run `write memory` after configuring: `snmp-server user` lines and the SSH RSA keys are lost on reboot otherwise.
+
 To run the opt-in integration tests, copy `tests/lab.example.json` to `tests/lab.json` (gitignored),
 fill in node addresses and the lab credentials, then run `dotnet test --project tests/Yanmt.Integration.Tests`.
 
