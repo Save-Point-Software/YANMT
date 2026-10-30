@@ -92,7 +92,11 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<SnmpPoller>();
         services.AddHostedService<MonitorPoller>();
         services.AddHostedService<ConfigBackupPoller>();
-        services.AddSingleton<Yanmt.Infrastructure.Rollups.RollupService>();
+        // The context factory is scoped; like StatusEngine, hold one factory from a long-lived scope.
+        services.AddSingleton(sp => new Yanmt.Infrastructure.Rollups.RollupService(
+            sp.CreateScope().ServiceProvider.GetRequiredService<IDbContextFactory<YanmtDbContext>>(),
+            sp.GetRequiredService<TimeProvider>(),
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Yanmt.Infrastructure.Rollups.RollupService>>()));
         services.AddHostedService<Yanmt.Infrastructure.Rollups.RollupWorker>();
         return services;
     }
