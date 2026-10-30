@@ -1,0 +1,65 @@
+@using Yanmt.Infrastructure.Events
+@implements IDisposable
+@inject EventService Events
+@inject InAppNotifier Notifier
+
+@if (_count > 0)
+{
+    <a class="critical-badge" href="events" title="@_count unacknowledged Critical event(s)" aria-label="@_count unacknowledged Critical events">@(_count > 99 ? "99+" : _count.ToString())</a>
+}
+
+@code {
+    private int _count;
+    private int _refreshing;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _count = await Events.CountUnacknowledgedCriticalAsync();
+        Notifier.EventsRecorded += OnRecorded;
+        Notifier.Acknowledged += OnAcknowledged;
+    }
+
+    private void OnRecorded(IReadOnlyList<EventNotice> notices)
+    {
+        if (notices.Any(n => n.NewState == Yanmt.Core.Status.Severity.Critical))
+        {
+            Refresh();
+        }
+    }
+
+    private void OnAcknowledged() => Refresh();
+
+    // Recount rather than increment so concurrent acks and recordings can't drift the number.
+    // Overlapping triggers coalesce: if a recount is running, run one more after it.
+    private void Refresh()
+    {
+        if (Interlocked.Increment(ref _refreshing) > 1)
+        {
+            return;
+        }
+
+        _ = InvokeAsync(async () =>
+        {
+            try
+            {
+                do
+                {
+                    Volatile.Write(ref _refreshing, 1);
+                    _count = await Events.CountUnacknowledgedCriticalAsync();
+                    StateHasChanged();
+                }
+                while (Interlocked.Decrement(ref _refreshing) > 0);
+            }
+            catch (Exception)
+            {
+                Volatile.Write(ref _refreshing, 0); // circuit gone or DB busy; the next trigger retries
+            }
+        });
+    }
+
+    public void Dispose()
+    {
+        Notifier.EventsRecorded -= OnRecorded;
+        Notifier.Acknowledged -= OnAcknowledged;
+    }
+}

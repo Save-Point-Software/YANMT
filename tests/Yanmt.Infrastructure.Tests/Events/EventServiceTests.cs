@@ -17,7 +17,7 @@ public class EventServiceTests
     private static readonly ClaimsPrincipal Viewer = new(new ClaimsIdentity([new Claim(ClaimTypes.Role, YanmtRoles.Viewer)], "test", ClaimTypes.Name, ClaimTypes.Role));
 
     private static EventService Service(TestDatabase test) =>
-        new(test.Factory, new SystemUser(), new AuditLogService(test.Factory, new SystemUser(), test.Clock), test.Clock);
+        new(test.Factory, new SystemUser(), new AuditLogService(test.Factory, new SystemUser(), test.Clock), test.Clock, new InAppNotifier());
 
     private static async Task AddEventsAsync(TestDatabase test, int nodeA, int nodeB)
     {
@@ -49,6 +49,44 @@ public class EventServiceTests
         var page = await events.QueryAsync(new EventFilter(), 1, 1, Ct);
         Assert.Equal(3, page.Total);
         Assert.Equal("a cpu warning", Assert.Single(page.Rows).Message);
+    }
+
+    [Fact]
+    public async Task Critical_count_covers_only_unacknowledged_critical_and_follows_acknowledgement()
+    {
+        await using var test = await TestDatabase.CreateAsync();
+        var a = await test.AddNodeAsync("lab-rtr-a", "192.0.2.1");
+        await AddEventsAsync(test, a, a);
+        var notifier = new InAppNotifier();
+        var acks = 0;
+        notifier.Acknowledged += () => acks++;
+        var events = new EventService(test.Factory, new SystemUser(), new AuditLogService(test.Factory, new SystemUser(), test.Clock), test.Clock, notifier);
+
+        Assert.Equal(2, await events.CountUnacknowledgedCriticalAsync(Ct));
+        var id = (await events.QueryAsync(new EventFilter(State: Severity.Critical), 0, 1, Ct)).Rows[0].Id;
+        await events.AcknowledgeAsync(id, Admin, Ct);
+        Assert.Equal(1, await events.CountUnacknowledgedCriticalAsync(Ct));
+        await events.AcknowledgeAllAsync(new EventFilter(), Admin, Ct);
+        Assert.Equal(0, await events.CountUnacknowledgedCriticalAsync(Ct));
+        Assert.Equal(2, acks);
+    }
+
+    [Fact]
+    public async Task Export_csv_honors_filter_and_has_no_extra_columns()
+    {
+        await using var test = await TestDatabase.CreateAsync();
+        var a = await test.AddNodeAsync("lab-rtr-a", "192.0.2.1");
+        var b = await test.AddNodeAsync("lab-rtr-b", "192.0.2.2");
+        await AddEventsAsync(test, a, b);
+        var events = Service(test);
+
+        var all = Yanmt.Core.Csv.CsvCodec.Parse(await events.ExportCsvAsync(new EventFilter(), Ct));
+        Assert.Equal(Yanmt.Core.Status.EventCsv.Columns, all[0]);
+        Assert.Equal(["b icmp critical", "a cpu warning", "a icmp critical"], all.Skip(1).Select(r => r[6]));
+        Assert.Equal("lab-rtr-b", all[1][2]);
+
+        var crit = Yanmt.Core.Csv.CsvCodec.Parse(await events.ExportCsvAsync(new EventFilter(NodeId: a, State: Severity.Critical), Ct));
+        Assert.Equal(["a icmp critical"], crit.Skip(1).Select(r => r[6]));
     }
 
     [Fact]
