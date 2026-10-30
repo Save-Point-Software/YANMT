@@ -84,12 +84,12 @@ public sealed class CredentialTransferService(
         }
 
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var existing = await db.CredentialProfiles.ToDictionaryAsync(p => p.Name, cancellationToken);
+        var existing = await db.CredentialProfiles.ToDictionaryAsync(p => p.Name, StringComparer.OrdinalIgnoreCase, cancellationToken);
         var now = clock.GetUtcNow().UtcDateTime;
         int created = 0, updated = 0;
         var skipped = new List<string>();
         var rejected = new List<string>();
-        var seen = new HashSet<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var a in profiles)
         {
@@ -110,6 +110,14 @@ public sealed class CredentialTransferService(
             var isSsh = a.Kind == CredentialKind.Ssh;
             if (existing.TryGetValue(name, out var profile))
             {
+                // The name column is case-insensitive, so "Core-SSH" and "core-ssh" can't both exist.
+                // Never touch a profile whose name only differs in case, whichever conflict mode is set.
+                if (!string.Equals(profile.Name, name, StringComparison.Ordinal))
+                {
+                    skipped.Add($"{name}: differs only in case from existing '{profile.Name}'.");
+                    continue;
+                }
+
                 if (conflict == ImportConflict.Skip)
                 {
                     skipped.Add($"{name}: already exists.");
