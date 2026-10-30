@@ -69,6 +69,9 @@ public abstract class NodePoller<TTarget, TSettings>(
         while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
+    /// <summary>Polls started and not yet handed to the engine. Tests use it to wait for a quiet poller.</summary>
+    internal int InFlightCount => _inFlight.Count;
+
     internal async Task TickAsync(CancellationToken cancellationToken)
     {
         var now = clock.GetUtcNow();
