@@ -167,6 +167,15 @@ Opens when a node is clicked on the map or in a list. It shows:
 - **Config backups:** version history and diffs for this node
 - **Events:** recent events for this node
 
+### Manual "Poll now" (decision)
+
+- Admin-only **Poll now** button in the node header. It immediately runs the node's ICMP, default SNMP stats, and custom-monitor polls and shows each source's result (OK, failed with the reason, or skipped when the node has no such source) on the page.
+- Results go to `StatusEngine` exactly like scheduled polls: no special-casing, so dampening is identical. A manual failure counts toward `FailuresBeforeCritical`, and a manual success clears failed, Unknown, and reboot-Warning states at once (a reboot is detected once, by whichever poll sees it first).
+- **Admin is enforced on the server** (`ManualPollService` checks the role and throws `UnauthorizedAccessException`); hiding the button is only a convenience.
+- **Rate limit:** one manual poll per node per 20 seconds, in memory (resets on restart). A refused poll runs nothing and reports how long to wait. A refused non-admin never uses up the slot.
+- The regular schedule, in-flight tracking, and worker limits are untouched; a manual poll can overlap a scheduled one, and both are applied in order of timestamp.
+- Uses the pollers' last-loaded targets, so a node that is disabled or has no SNMP profile shows "Not monitored on this node". Config backups are not part of Poll now.
+
 ### Config backups (SSH)
 
 - Pull `show running-config` on a schedule (default daily) and on demand.

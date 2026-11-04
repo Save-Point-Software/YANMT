@@ -94,6 +94,8 @@ public sealed class MonitorPoller(
         return (settings, TimeSpan.FromSeconds(settings.IntervalSeconds), targets);
     }
 
+    protected override int NodeIdOf(int key, MonitorPollTarget target) => target.NodeId;
+
     protected override TimeSpan IntervalOf(MonitorPollTarget target, TimeSpan interval) => target.Interval;
 
     protected override async Task<PollResult> PollAsync(int key, MonitorPollTarget target, SnmpSettings settings, DateTime startedUtc, CancellationToken cancellationToken)

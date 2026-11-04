@@ -89,10 +89,14 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<StatusEngine>>()));
         services.AddHostedService<StatusEngineService>();
         services.AddSingleton<DefaultStatsCollector>();
-        services.AddHostedService<IcmpPoller>();
-        services.AddHostedService<SnmpPoller>();
-        services.AddHostedService<MonitorPoller>();
+        services.AddSingleton<IcmpPoller>();
+        services.AddHostedService(sp => sp.GetRequiredService<IcmpPoller>());
+        services.AddSingleton<SnmpPoller>();
+        services.AddHostedService(sp => sp.GetRequiredService<SnmpPoller>());
+        services.AddSingleton<MonitorPoller>();
+        services.AddHostedService(sp => sp.GetRequiredService<MonitorPoller>());
         services.AddHostedService<ConfigBackupPoller>();
+        services.AddSingleton<ManualPollService>();
         // The context factory is scoped; like StatusEngine, hold one factory from a long-lived scope.
         services.AddSingleton(sp => new Yanmt.Infrastructure.Rollups.RollupService(
             sp.CreateScope().ServiceProvider.GetRequiredService<IDbContextFactory<YanmtDbContext>>(),
