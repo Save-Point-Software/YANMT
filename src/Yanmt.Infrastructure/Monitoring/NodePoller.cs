@@ -46,6 +46,9 @@ public abstract class NodePoller<TTarget, TSettings>(
     /// <summary>Polls one target. Exceptions are turned into a result by <see cref="Failed"/>.</summary>
     protected abstract Task<PollResult> PollAsync(int key, TTarget target, TSettings settings, DateTime startedUtc, CancellationToken cancellationToken);
 
+    /// <summary>The node a target belongs to. Most pollers key their targets by node id.</summary>
+    protected virtual int NodeIdOf(int key, TTarget target) => key;
+
     protected abstract PollResult Failed(int key, TTarget target, TSettings settings, DateTime startedUtc, Exception exception);
 
     /// <summary>Longest a single poll may run before it is cancelled and reported as failed.</summary>
@@ -67,6 +70,40 @@ public abstract class NodePoller<TTarget, TSettings>(
             }
         }
         while (await timer.WaitForNextTickAsync(stoppingToken));
+    }
+
+    /// <summary>
+    /// Polls one node's targets right now, outside the schedule, and returns the results without
+    /// submitting them (the caller hands them to the engine). The schedule, the in-flight set and
+    /// the worker limit are untouched, so regular polling carries on undisturbed. Targets come from
+    /// the last reload; a node with none (disabled, or this kind not configured) returns nothing.
+    /// </summary>
+    internal async Task<IReadOnlyList<PollResult>> PollNowAsync(int nodeId, CancellationToken cancellationToken)
+    {
+        var targets = _targets.Where(t => NodeIdOf(t.Key, t.Value) == nodeId).ToList();
+        if (targets.Count == 0 || _settings is not { } settings)
+        {
+            return [];
+        }
+
+        var results = new List<PollResult>();
+        foreach (var (key, target) in targets)
+        {
+            var started = clock.GetUtcNow().UtcDateTime;
+            using var guard = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            guard.CancelAfter(Backstop(settings));
+            try
+            {
+                results.Add(await PollAsync(key, target, settings, started, guard.Token));
+            }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                logger.LogDebug(ex, "{Kind} manual poll {Key} failed", Kind, key);
+                results.Add(Failed(key, target, settings, started, ex));
+            }
+        }
+
+        return results;
     }
 
     /// <summary>Polls started and not yet handed to the engine. Tests use it to wait for a quiet poller.</summary>
