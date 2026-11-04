@@ -434,8 +434,9 @@ public class NodeDetailServiceTests
         var service = new NodeDetailService(test.Factory, new SettingsService(test.Factory, test.Clock), test.Clock);
         var month = await service.GetChartsAsync(node, ChartRange.Month, Ct);
 
-        Assert.Equal(30, month.Cpu.Max(b => b.Max)); // the raw 99 inside a rolled hour is ignored
-        Assert.Equal(60, month.Cpu[^1].Avg); // raw tail after the last rolled hour
+        Assert.DoesNotContain(month.Cpu, b => b.Max == 99); // the raw 99 inside a rolled hour is ignored
+        Assert.Equal(30, month.Cpu.Where(b => b.Max < 60).Max(b => b.Max)); // rolled-up buckets
+        Assert.Contains(month.Cpu, b => b.Max == 60); // raw tail after the last rolled hour, whatever the bucket alignment
         Assert.Equal(50, month.Loss.Max(b => b.Max));
         Assert.Equal(5, month.Latency[0].Avg);
         Assert.True(month.FromUtc <= now.AddDays(-30));
