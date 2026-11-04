@@ -16,7 +16,7 @@
     else
     {
         <table class="grid">
-            <thead><tr><th class="col-state"></th><th>Source</th><th>Value</th><th>Last 24 h</th><th>Since (UTC)</th></tr></thead>
+            <thead><tr><th class="col-state"></th><th>Source</th><th>Value</th><th>Last @RangeLabel</th><th>Since (UTC)</th></tr></thead>
             <tbody>
                 @foreach (var s in Live.Sources)
                 {
@@ -83,6 +83,7 @@
         [(ChartRange.Hour, "1 h"), (ChartRange.SixHours, "6 h"), (ChartRange.Day, "24 h"), (ChartRange.Week, "7 d"), (ChartRange.Month, "30 d"), (ChartRange.Quarter, "90 d")];
 
     private ChartRange _range = ChartRange.SixHours;
+    private string RangeLabel => Ranges.First(r => r.Range == _range).Label;
     private NodeCharts? _charts;
     private Thresholds _cpu;
     private Thresholds _memory;
