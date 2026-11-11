@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using Yanmt.Core.Status;
 using Yanmt.Infrastructure.Data;
@@ -6,8 +7,23 @@ using Yanmt.Infrastructure.Data.Entities;
 
 namespace Yanmt.Infrastructure.Monitoring;
 
-/// <summary>Current state and value of one enabled status source.</summary>
-public sealed record SourceStatus(StatusSourceType Type, string Key, Severity State, double? Value, string? ValueText, DateTime SinceUtc, string? DisplayName = null);
+/// <summary>
+/// Current state and value of one enabled status source. For custom monitors, the pending fields
+/// carry a dampened change that hasn't taken effect yet (<see cref="RequiredMatches"/> is the
+/// definition's consecutive matches); they are null/0 for built-in sources.
+/// </summary>
+public sealed record SourceStatus(
+    StatusSourceType Type, string Key, Severity State, double? Value, string? ValueText, DateTime SinceUtc, string? DisplayName = null,
+    Severity? PendingState = null, int PendingCount = 0, int? RequiredMatches = null)
+{
+    /// <summary>E.g. "Critical pending (1 of 2 matching polls before Critical)", or null.</summary>
+    public string? PendingText => RequiredMatches is { } required
+        ? Yanmt.Core.Monitors.PendingText.For(State, PendingState, PendingCount, required)
+        : null;
+
+    /// <summary>The pending state when <see cref="PendingText"/> has something to show.</summary>
+    public Severity? ShownPending => PendingText is null ? null : PendingState;
+}
 
 /// <summary>A node's rolled-up state: worst of its enabled sources; Unknown if the node is disabled or has none.</summary>
 public sealed record NodeStatus(int NodeId, bool Enabled, Severity State, IReadOnlyList<SourceStatus> Sources)
@@ -42,12 +58,26 @@ public sealed class StatusCache
         var nodes = await nodeQuery.Select(n => new { n.Id, n.Enabled }).ToListAsync(cancellationToken);
         var sources = (await sourceQuery.ToListAsync(cancellationToken)).ToLookup(s => s.NodeId);
 
+        // Custom sources are keyed by instance id; their dampening comes from the definition.
+        var instanceQuery = db.MonitorInstances.AsNoTracking();
+        if (nodeIds is not null)
+        {
+            instanceQuery = instanceQuery.Where(i => nodeIds.Contains(i.NodeId));
+        }
+
+        var required = await instanceQuery
+            .Select(i => new { i.Id, i.Definition.ConsecutiveMatches })
+            .ToDictionaryAsync(i => i.Id.ToString(CultureInfo.InvariantCulture), i => i.ConsecutiveMatches, cancellationToken);
+
         var changed = new List<int>();
         foreach (var node in nodes)
         {
             var list = sources[node.Id]
                 .OrderBy(s => s.SourceType).ThenBy(s => s.DisplayName, StringComparer.OrdinalIgnoreCase).ThenBy(s => s.SourceKey, StringComparer.Ordinal)
-                .Select(s => new SourceStatus(s.SourceType, s.SourceKey, s.State, s.Value, s.ValueText, s.SinceUtc, s.DisplayName))
+                .Select(s => s.SourceType == StatusSourceType.Custom
+                    ? new SourceStatus(s.SourceType, s.SourceKey, s.State, s.Value, s.ValueText, s.SinceUtc, s.DisplayName,
+                        s.PendingState, s.PendingCount, required.TryGetValue(s.SourceKey, out var r) ? r : null)
+                    : new SourceStatus(s.SourceType, s.SourceKey, s.State, s.Value, s.ValueText, s.SinceUtc, s.DisplayName))
                 .ToList();
             var state = node.Enabled ? StatusRollup.Worst(list.Select(s => s.State)) : Severity.Unknown;
             var status = new NodeStatus(node.Id, node.Enabled, state, list);

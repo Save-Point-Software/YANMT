@@ -466,15 +466,26 @@ public class MonitorPollingTests
         var (engine, cache, _) = test.Engine();
         await test.PollAsync(engine, node, agent);
 
+        Assert.Null(Assert.Single(cache.Custom(node)).PendingText);
+
         agent.Set("1.3.6.1.2.1.2.2.1.8.1", new Integer32(2)); // down once...
         await test.PollAsync(engine, node, agent);
-        Assert.Equal(Severity.Normal, Assert.Single(cache.Custom(node)).State);
+        var pending = Assert.Single(cache.Custom(node));
+        Assert.Equal(Severity.Normal, pending.State);
+        Assert.Equal((Severity.Critical, 1, 2), (pending.PendingState, pending.PendingCount, pending.RequiredMatches));
+        Assert.Equal("Critical pending (1 of 2 matching polls before Critical)", pending.PendingText);
+        Assert.Equal(Severity.Critical, pending.ShownPending);
+
         agent.Set("1.3.6.1.2.1.2.2.1.8.1", new Integer32(1)); // ...and back: never went red
         await test.PollAsync(engine, node, agent);
+        Assert.Null(Assert.Single(cache.Custom(node)).PendingText);
         agent.Set("1.3.6.1.2.1.2.2.1.8.1", new Integer32(2)); // down twice in a row: Critical
         await test.PollAsync(engine, node, agent);
         await test.PollAsync(engine, node, agent);
-        Assert.Equal(Severity.Critical, Assert.Single(cache.Custom(node)).State);
+        var critical = Assert.Single(cache.Custom(node));
+        Assert.Equal(Severity.Critical, critical.State);
+        Assert.Null(critical.PendingState);
+        Assert.Null(critical.PendingText);
     }
 
     [Fact]

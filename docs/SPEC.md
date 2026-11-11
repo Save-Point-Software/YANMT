@@ -140,7 +140,7 @@ A **monitor definition** has:
 - **Optional value map** that turns integers into labels (for example, BGP peer state `6 = established`, `ifOperStatus 1 = up, 2 = down`)
 - **State rules,** evaluated in order, with the first match winning. Each rule pairs an operator (`=`, `!=`, `>`, `>=`, `<`, `<=`, `between`, `contains`, `regex`) and a value with a resulting state (Normal, Warning, or Critical). A default state applies when no rule matches.
 - **Poll interval,** overriding the default if set
-- **Consecutive matches before the state changes,** to dampen flapping
+- **Consecutive matches before the state changes,** to dampen flapping. While a change is waiting, the node page shows it next to the current state, e.g. `idle — Critical pending (1 of 2 matching polls before Critical)`, with a hollow dot in the pending color; a map link bound to the monitor keeps its current color and gets a hollow dot at its midpoint, with the same text in its tooltip. Node and submap colors use only current states (#34).
 - **Event on state change,** on or off
 
 How monitors get applied:

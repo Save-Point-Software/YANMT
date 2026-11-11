@@ -157,6 +157,11 @@ class MapController {
                 line.setAttribute("x2", b.dataset.x);
                 line.setAttribute("y2", b.dataset.y);
             }
+            const pending = link.querySelector("circle.map-link-pending");
+            if (pending) {
+                pending.setAttribute("cx", (+a.dataset.x + +b.dataset.x) / 2);
+                pending.setAttribute("cy", (+a.dataset.y + +b.dataset.y) / 2);
+            }
             const label = link.querySelector("text");
             if (label) {
                 label.setAttribute("x", (+a.dataset.x + +b.dataset.x) / 2);

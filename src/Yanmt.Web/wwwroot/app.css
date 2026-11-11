@@ -265,6 +265,18 @@ table.grid {
     vertical-align: middle;
 }
 
+/* A dampened change that hasn't taken effect yet: hollow, in the pending state's color. */
+.state-dot.pending {
+    background: transparent;
+    border-width: 2px;
+    border-style: solid;
+    margin-left: 0.2rem;
+}
+
+.pending-text {
+    margin-left: 0.4rem;
+}
+
 .pill {
     display: inline-block;
     padding: 0.05rem 0.5rem;
@@ -922,6 +934,11 @@ input.narrow,
 
 .map-link.bound.selected .map-link-line {
     stroke-width: 6;
+}
+
+.map-link-pending {
+    fill: #ffffff;
+    stroke-width: 3;
 }
 
 /* Config backup diffs */
