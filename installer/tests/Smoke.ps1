@@ -179,6 +179,9 @@ try {
     sc.exe start YANMT | Out-String | Write-Host   # prints the Win32 error code when it fails
     if (-not (Wait-Until { (Get-Service YANMT).Status -eq 'Running' } 60)) {
         sc.exe query YANMT | Out-String | Write-Host
+        icacls $app | Out-String | Write-Host
+        icacls "$app\yanmt.exe" | Out-String | Write-Host
+        icacls $env:ProgramFiles | Out-String | Write-Host
         Show-Logs
         throw 'The manual install (svc-yanmt) did not start.'
     }
