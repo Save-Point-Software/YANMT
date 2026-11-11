@@ -61,16 +61,31 @@ line always wins.
 **Interactive:** run the MSI. One dialog asks for the properties above. Bad values (unknown certificate,
 group that doesn't resolve, bad port) are shown there before anything is installed.
 
-**Silent:**
+**Silent:** `msiexec` is a GUI program, so PowerShell doesn't wait for it and doesn't see its exit code.
+Define this helper once in the prompt; the examples in this section use it. It waits, writes a verbose
+log, and stops with an error unless the MSI succeeded (0, or 3010 for "succeeded, restart needed").
 
 ```powershell
-msiexec /i yanmt-1.2.3.msi /qn /l*v install.log `
-    CERT_THUMBPRINT=A1B2C3D4E5F60718293A4B5C6D7E8F9012345678 `
-    ADMIN_GROUPS="CONTOSO\YANMT-Admins" VIEWER_GROUPS="CONTOSO\YANMT-Viewers" `
-    FIREWALL_REMOTE_ADDRESS=192.0.2.0/24
+function Invoke-Msi([string] $Log, [string[]] $Arguments) {
+    # Start-Process quotes nothing, so quote each value: NAME="value" and the full path of the MSI.
+    $quoted = foreach ($a in $Arguments) {
+        if ($a -match '^([A-Z_]+)=(.*)$') { "$($Matches[1])=`"$($Matches[2])`"" }
+        elseif ($a -match '^/') { $a }
+        else { "`"$((Resolve-Path $a -ErrorAction Stop).Path)`"" }
+    }
+    $line = (@($quoted) + @('/qn', '/norestart', '/l*v', "`"$(Join-Path $PWD $Log)`"")) -join ' '
+    $p = Start-Process msiexec.exe -ArgumentList $line -Wait -PassThru
+    if ($p.ExitCode -notin 0, 3010) { throw "msiexec failed with exit code $($p.ExitCode); see $Log." }
+}
+
+Invoke-Msi install.log '/i', '.\yanmt-1.2.3.msi',
+    'CERT_THUMBPRINT=A1B2C3D4E5F60718293A4B5C6D7E8F9012345678',
+    'ADMIN_GROUPS=CONTOSO\YANMT-Admins', 'VIEWER_GROUPS=CONTOSO\YANMT-Viewers',
+    'FIREWALL_REMOTE_ADDRESS=192.0.2.0/24'
 ```
 
-Bad settings fail the install with exit code 1603 and change nothing; the reason is in the log.
+Bad settings fail the install with exit code 1603 and change nothing; the reason is in the log. With plain
+`msiexec /i ... /qn` the prompt returns at once, so a following command can run before the install is done.
 
 What the MSI does:
 
@@ -108,8 +123,8 @@ Run the installed version's MSI again, or use *Change* in *Apps > Installed apps
 the current values. Silent, give only what changes:
 
 ```powershell
-msiexec /i yanmt-1.2.3.msi /qn /l*v change.log PORT=9443
-msiexec /i yanmt-1.2.3.msi /qn /l*v change.log CLEAR_VIEWER_GROUPS=1 CLEAR_FIREWALL_REMOTE_ADDRESS=1
+Invoke-Msi change.log '/i', '.\yanmt-1.2.3.msi', 'PORT=9443'
+Invoke-Msi clear.log  '/i', '.\yanmt-1.2.3.msi', 'CLEAR_VIEWER_GROUPS=1', 'CLEAR_FIREWALL_REMOTE_ADDRESS=1'
 ```
 
 An empty value on the command line means "not given", so use the `CLEAR_` properties to remove the viewer
@@ -127,23 +142,38 @@ Run the newer MSI (interactively, or silently with no properties). The MSI:
 4. Starts the service, which applies database migrations.
 
 A failed upgrade rolls back to the old version. The same or an older version is refused, because
-migrations are one-way. To go back to an older version:
+migrations are one-way. To go back to an older version, use the backup that the upgrade **from** that
+version made. Its folder name starts with that version. Everything recorded since that upgrade is lost.
 
 ```powershell
-$bk = Get-ChildItem "$data\backups\pre-upgrade" | Sort-Object Name | Select-Object -Last 1   # check it's the right one
-msiexec /x yanmt-1.2.4.msi /qn /l*v uninstall.log      # the newer version; the data folder stays
-Remove-Item "$data\yanmt.db", "$data\yanmt.db-wal", "$data\yanmt.db-shm" -ErrorAction SilentlyContinue
+$older = '1.2.3'                        # the version to go back to; you need its MSI
+$ErrorActionPreference = 'Stop'
+
+# The newest backup made when upgrading from $older (by time, not by name).
+$bk = Get-ChildItem "$data\backups\pre-upgrade" -Directory | Where-Object Name -like "$older-*" |
+    Sort-Object CreationTimeUtc | Select-Object -Last 1
+if (-not $bk -or -not (Test-Path "$($bk.FullName)\yanmt.db")) { throw "No pre-upgrade backup from $older in $data\backups\pre-upgrade." }
+"Restoring $($bk.FullName) (made $($bk.CreationTime))"
+
+Invoke-Msi uninstall.log '/x', '.\yanmt-1.2.4.msi'          # the newer version; the data folder stays
+if (Get-Service YANMT -ErrorAction SilentlyContinue) { throw 'The YANMT service still exists; the uninstall did not finish.' }
+
+foreach ($f in 'yanmt.db', 'yanmt.db-wal', 'yanmt.db-shm') {
+    if (Test-Path "$data\$f") { Remove-Item "$data\$f" }       # stops here if a file can't be deleted
+}
 Copy-Item "$($bk.FullName)\*" $data
-msiexec /i yanmt-1.2.3.msi /qn /l*v install.log CERT_THUMBPRINT=... ADMIN_GROUPS=...
+
+Invoke-Msi install.log '/i', ".\yanmt-$older.msi", 'CERT_THUMBPRINT=...', 'ADMIN_GROUPS=...'
 ```
 
 Delete the newer `-wal`/`-shm` files as shown: SQLite would otherwise apply them to the older database.
-The uninstall removes the stored settings, so give the properties again. Reinstalling resets the data
-folder ACL, including the restored files.
+Each step stops on an error, so the data is never touched after a failed uninstall. The uninstall removes
+the stored settings, so give the properties again. Reinstalling resets the data folder ACL, including the
+restored files.
 
 ### 1.6 Uninstall
 
-Use *Apps > Installed apps > YANMT > Uninstall*, or `msiexec /x yanmt-1.2.3.msi /qn /l*v uninstall.log`.
+Use *Apps > Installed apps > YANMT > Uninstall*, or silently `Invoke-Msi uninstall.log '/x', '.\yanmt-1.2.3.msi'` (section 1.3).
 
 Removed: the service, the firewall rule, the Event Log source, `HKLM\SOFTWARE\YANMT`, and the install
 folder. That includes **`appsettings.json`**; an upgrade keeps it, an uninstall doesn't. Copy it somewhere
