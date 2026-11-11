@@ -100,9 +100,9 @@
     <CustomAction Id="GrantKeyRead" BinaryRef="YanmtCA" DllEntry="GrantKeyRead" Execute="deferred" Impersonate="no" Return="check" />
     <CustomAction Id="CreateLocalGroups" BinaryRef="YanmtCA" DllEntry="CreateLocalGroups" Execute="deferred" Impersonate="no" Return="check" />
     <CustomAction Id="StartYanmtService" BinaryRef="YanmtCA" DllEntry="StartYanmtService" Execute="deferred" Impersonate="no" Return="ignore" />
-    <CustomAction Id="RemoveAppSettings" BinaryRef="YanmtCA" DllEntry="RemoveAppSettings" Execute="deferred" Impersonate="no" Return="ignore" />
+    <CustomAction Id="CleanInstallFolder" BinaryRef="YanmtCA" DllEntry="CleanInstallFolder" Execute="deferred" Impersonate="no" Return="ignore" />
     <CustomAction Id="ReportServiceState" BinaryRef="YanmtCA" DllEntry="ReportServiceState" Execute="immediate" Return="ignore" />
-    <SetProperty Id="RemoveAppSettings" Value="InstallFolder=[INSTALLFOLDER]" Before="RemoveAppSettings" Sequence="execute" />
+    <SetProperty Id="CleanInstallFolder" Value="InstallFolder=[INSTALLFOLDER]" Before="CleanInstallFolder" Sequence="execute" />
 
     <InstallExecuteSequence>
       <Custom Action="PrepareInstall" After="CostFinalize" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
@@ -113,7 +113,7 @@
       <Custom Action="GrantKeyRead" After="SetFolderAcls" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
       <Custom Action="CreateLocalGroups" After="GrantKeyRead" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
       <Custom Action="StartYanmtService" Before="InstallFinalize" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
-      <Custom Action="RemoveAppSettings" After="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="CleanInstallFolder" After="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
     <InstallUISequence>
       <Custom Action="ReportServiceState" After="ExecuteAction" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
@@ -130,7 +130,7 @@
 
       <!--
         Kept on upgrade: Permanent, so removing the old version leaves it, and NeverOverwrite, so the new
-        version doesn't replace it (also keeps the appsettings.json of a manual install). RemoveAppSettings
+        version doesn't replace it (also keeps the appsettings.json of a manual install). CleanInstallFolder
         deletes it on a real uninstall.
       -->
       <Component Id="AppSettings" Permanent="yes" NeverOverwrite="yes">

@@ -133,24 +133,40 @@ public static class MachineActions
     }
 
     /// <summary>
-    /// Real uninstall only (not the old product's removal during an upgrade): appsettings.json is a
-    /// permanent component so upgrades keep a hand-edited copy; remove it now so the folder goes too.
+    /// Real uninstall only (not the old product's removal during an upgrade), after RemoveFiles.
+    /// appsettings.json is a permanent component so upgrades keep a hand-edited copy: delete it now.
+    /// Then delete empty subfolders, which Windows Installer leaves when they existed before the MSI
+    /// (a manual install). Anything still holding a file is left alone. RemoveFolders then removes the
+    /// install folder itself if it's empty.
     /// </summary>
     [CustomAction]
-    public static ActionResult RemoveAppSettings(Session session)
+    public static ActionResult CleanInstallFolder(Session session)
     {
+        var folder = session.CustomActionData["InstallFolder"];
         try
         {
-            var path = Path.Combine(session.CustomActionData["InstallFolder"], "appsettings.json");
-            if (File.Exists(path))
+            var settings = Path.Combine(folder, "appsettings.json");
+            if (File.Exists(settings))
             {
-                File.Delete(path);
-                session.Log($"YANMT: removed {path}.");
+                File.Delete(settings);
+                session.Log($"YANMT: removed {settings}.");
+            }
+
+            if (Directory.Exists(folder))
+            {
+                foreach (var dir in Directory.GetDirectories(folder, "*", SearchOption.AllDirectories)
+                             .OrderByDescending(d => d.Length))
+                {
+                    if (!Directory.EnumerateFileSystemEntries(dir).Any())
+                    {
+                        Directory.Delete(dir);
+                    }
+                }
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
         {
-            session.Log("YANMT: could not remove appsettings.json: " + ex.Message);
+            session.Log($"YANMT: could not clean up {folder}: {ex.Message}");
         }
 
         return ActionResult.Success;
