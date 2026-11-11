@@ -29,11 +29,15 @@ public static class LoggingSetup
         fileOptions.Directory = paths.Logs;
         builder.Services.AddSingleton<ILoggerProvider>(_ => new RollingFileLoggerProvider(fileOptions));
 
-        if (EventSourceExists())
+        EventLogProviderAdded = EventSourceExists();
+        if (EventLogProviderAdded)
         {
             builder.Logging.AddEventLog(new EventLogSettings { SourceName = EventSource, LogName = "Application" });
         }
     }
+
+    /// <summary>True once <see cref="Configure"/> has added the event log provider (the source is registered).</summary>
+    public static bool EventLogProviderAdded { get; private set; }
 
     public static bool EventSourceExists()
     {
@@ -49,33 +53,26 @@ public static class LoggingSetup
     }
 
     /// <summary>
-    /// Last-resort reporting for failures before or during host startup. When the logger isn't
-    /// built yet (e.g. a bad certificate), the console is invisible under the service manager,
-    /// so the error also goes to logs\startup-failure.log and the event log if the source exists.
+    /// Reports a fatal startup error everywhere it can be found: the daily log (CRIT, when the logger
+    /// is up), logs\startup-failure.log (always: it is written synchronously, so it survives the
+    /// immediate exit), and the Application event log if the source exists. When the logger is up and
+    /// already has the event log provider, the CRIT line is the event log entry, so it isn't written twice.
     /// </summary>
-    public static void ReportStartupFailure(Exception ex, ILogger? logger, string? logsDirectory)
+    public static void ReportStartupFailure(Exception ex, ILogger? logger, string? logsDirectory, string? timings)
     {
-        logger?.LogCritical(ex, "YANMT failed to start");
+        logger?.LogCritical(ex, "YANMT failed to start. Startup timings: {Timings}", timings);
         Console.Error.WriteLine($"YANMT failed to start: {ex}");
-        if (logger is null && logsDirectory is not null)
+        if (logsDirectory is not null)
         {
-            try
-            {
-                File.AppendAllText(
-                    Path.Combine(logsDirectory, "startup-failure.log"),
-                    $"{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}Z YANMT failed to start: {ex}{Environment.NewLine}");
-            }
-            catch (Exception)
-            {
-                // Data folder not writable either; the event log is the last option.
-            }
+            StartupFailureLog.Append(logsDirectory, ex, DateTimeOffset.UtcNow, timings);
         }
 
-        if (logger is null && EventSourceExists())
+        if ((logger is null || !EventLogProviderAdded) && EventSourceExists())
         {
             try
             {
-                EventLog.WriteEntry(EventSource, $"YANMT failed to start: {ex}", EventLogEntryType.Error);
+                var text = $"YANMT failed to start: {ex}";
+                EventLog.WriteEntry(EventSource, text.Length > MaxEventText ? text[..MaxEventText] : text, EventLogEntryType.Error);
             }
             catch (Exception)
             {
@@ -83,4 +80,7 @@ public static class LoggingSetup
             }
         }
     }
+
+    // An event log entry holds at most 31,839 characters.
+    private const int MaxEventText = 30_000;
 }
