@@ -16,5 +16,15 @@ dotnet build installer/Yanmt.Installer.wixproj -c Release -p:ProductVersion=1.2.
 | `CustomActions/` | C# (.NET Framework 4.8) actions: check settings, back up the database before an upgrade, replace a manual install's service, folder ACLs, certificate key grant, local groups, start the service. |
 | `tests/Smoke.ps1` | CI smoke test: manual install, MSI install over it, upgrade, downgrade refused, uninstall. Only for a throwaway machine. |
 
+## Releases
+
+`.github/workflows/release.yml` runs when a GitHub Release is **published** (a pre-release counts too).
+Create the release in the GitHub UI with a new tag `vX.Y.Z` (X and Y at most 255, Z at most 65535, no
+suffix) on the commit to ship. The workflow builds and tests that tag, publishes with `-p:Version=X.Y.Z`,
+builds `yanmt-X.Y.Z.msi` with the same version, and attaches it plus `SHA256SUMS.txt` to the release.
+A bad tag fails the run and attaches nothing. Re-running a failed run replaces both files.
+
+Check a download: `Get-FileHash yanmt-X.Y.Z.msi -Algorithm SHA256` must match the line in `SHA256SUMS.txt`.
+
 WiX v7 needs the OSMF EULA accepted (`installer/Directory.Build.props`). The owner accepted it on
 2026-11-11 because YANMT earns no revenue. The MSI is unsigned for now.
