@@ -10,6 +10,12 @@
     VIEWER_GROUPS            Optional, same forms.
     FIREWALL_REMOTE_ADDRESS  Optional. Remote address scope of the inbound rule; empty = no rule.
   Upgrade and repair read them back from HKLM\SOFTWARE\YANMT; a value on the command line wins.
+  An empty value can't be told apart from "not given", so clearing an optional setting is explicit:
+    CLEAR_VIEWER_GROUPS=1             remove the stored viewer groups (appsettings.json is then in charge, as in a manual install).
+    CLEAR_FIREWALL_REMOTE_ADDRESS=1   remove the firewall rule and its stored scope.
+  The settings dialog sets these when a field is left empty. Running /i again on an installed version
+  reinstalls it with the given settings (no REINSTALL needed): msiexec /i yanmt-X.Y.Z.msi /qn CLEAR_VIEWER_GROUPS=1
+  The installer refuses a custom Yanmt:DataPath (only %ProgramData%\YANMT is supported).
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
@@ -70,6 +76,18 @@
     <SetProperty Id="$(P)" Action="YanmtRestore_$(P)" Value="[YANMT_CMD_$(P)]" After="AppSearch" Sequence="both" Condition="YANMT_CMD_$(P)" />
     <?endforeach?>
     <SetProperty Id="PORT" Action="YanmtDefault_PORT" Value="8443" After="YanmtRestore_PORT" Sequence="both" Condition="NOT PORT" />
+    <!-- Explicit clearing wins over the registry value (a value given in the same run wins over the clear). -->
+    <?foreach P in VIEWER_GROUPS;FIREWALL_REMOTE_ADDRESS ?>
+    <Property Id="CLEAR_$(P)" Secure="yes" />
+    <SetProperty Id="$(P)" Action="YanmtClear_$(P)" Value="[YANMT_NOTHING]" After="YanmtRestore_$(P)" Sequence="both"
+                 Condition="CLEAR_$(P) AND NOT YANMT_CMD_$(P)" />
+    <?endforeach?>
+    <!--
+      /i on an installed version: reinstall everything, so changed settings are written and components
+      whose condition changed (viewer groups, firewall rule) are added or removed. Not for /x or Remove.
+    -->
+    <SetProperty Id="REINSTALL" Action="YanmtReinstall" Value="ALL" Before="CostInitialize" Sequence="execute"
+                 Condition="Installed AND NOT REMOVE AND NOT REINSTALL AND NOT PATCH" />
 
     <!-- Firewall profiles Domain (1) + Private (2), never Public. -->
     <Property Id="YANMT_FW_PROFILE" Value="3" />
@@ -176,11 +194,22 @@
           <RegistryValue Name="Port" Type="string" Value="[PORT]" KeyPath="yes" />
           <RegistryValue Name="CertificateThumbprint" Type="string" Value="[CERT_THUMBPRINT]" />
           <RegistryValue Name="AdminGroups" Type="string" Value="[ADMIN_GROUPS]" />
-          <RegistryValue Name="ViewerGroups" Type="string" Value="[VIEWER_GROUPS]" />
         </RegistryKey>
       </Component>
 
-      <!-- Only with FIREWALL_REMOTE_ADDRESS. The value is stored so upgrades and repairs keep the rule. -->
+      <!--
+        Only with VIEWER_GROUPS. Transitive: a reinstall with the groups cleared removes the value, and the app
+        then takes Yanmt:Roles:ViewerGroups from appsettings.json (empty by default), as a manual install does.
+      -->
+      <Component Id="ViewerGroupsSetting" Condition="VIEWER_GROUPS" Transitive="yes">
+        <RegistryValue Root="HKLM" Key="$(var.SettingsKey)" Name="ViewerGroups" Type="string"
+                       Value="[VIEWER_GROUPS]" KeyPath="yes" />
+      </Component>
+
+      <!--
+        Only with FIREWALL_REMOTE_ADDRESS. The value is stored so upgrades and repairs keep the rule. Transitive:
+        a reinstall with CLEAR_FIREWALL_REMOTE_ADDRESS removes the rule and the value.
+      -->
       <Component Id="FirewallRule" Condition="FIREWALL_REMOTE_ADDRESS" Transitive="yes">
         <RegistryValue Root="HKLM" Key="$(var.SettingsKey)" Name="FirewallRemoteAddress" Type="string"
                        Value="[FIREWALL_REMOTE_ADDRESS]" KeyPath="yes" />

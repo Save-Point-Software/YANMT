@@ -22,6 +22,11 @@ public static class SettingsActions
             if (settings.Errors.Count == 0)
             {
                 settings.WriteBack(session);
+
+                // An emptied optional field must survive the execute sequence's AppSearch, which reads the
+                // old value back from the registry: say so explicitly (Package.wxs, YanmtClear_*).
+                session["CLEAR_VIEWER_GROUPS"] = settings.ViewerGroups.Count == 0 ? "1" : "";
+                session["CLEAR_FIREWALL_REMOTE_ADDRESS"] = settings.FirewallRemoteAddress.Length == 0 ? "1" : "";
             }
         }
         catch (Exception ex)

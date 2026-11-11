@@ -56,6 +56,13 @@ internal sealed class InstallSettings
         }
 
         s.ReadFirewallRemoteAddress(session["FIREWALL_REMOTE_ADDRESS"]);
+
+        // Before anything changes: a custom data folder isn't supported (DataPathCheck).
+        if (DataPathCheck.FindCustomDataPath(session["INSTALLFOLDER"]) is { } custom)
+        {
+            s.Errors.Add(custom);
+        }
+
         return s;
     }
 

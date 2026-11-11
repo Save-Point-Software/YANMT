@@ -8,8 +8,10 @@
   2. An MSI install with a bad thumbprint: must fail early and change nothing.
   3. MSI install (version 1) over the manual install: replaces the service with NT SERVICE\YANMT,
      re-grants folders and the key, creates the local groups, keeps the hand-edited appsettings.json.
+  2b. A custom Yanmt:DataPath (appsettings.json, or a machine environment variable): refused early.
   4. Upgrade to version 2 with no properties: settings read back from the registry, database
      backed up, hand-edited appsettings.json kept.
+  4b/c. Change: clear the viewer groups and the firewall scope, then set them again.
   5. Version 1 again: refused (downgrade).
   6. Uninstall: service, firewall rule, event source, install folder and registry key gone; data kept.
 
@@ -119,6 +121,22 @@ function Get-Rule { Get-NetFirewallRule -DisplayName 'YANMT web UI' -ErrorAction
 
 function Get-Settings { Get-ItemProperty -Path 'HKLM:\SOFTWARE\YANMT' -ErrorAction SilentlyContinue }
 
+function Get-Setting([string] $name) {
+    $r = Get-Settings
+    if ($r -and $r.PSObject.Properties[$name]) { return $r.$name }
+    return $null
+}
+
+# The app's startup line "Installer settings from HKLM\SOFTWARE\YANMT override appsettings.json: <keys>".
+# Read with sharing: the service has the log open.
+function Get-InstallerSettingsLines {
+    $lines = foreach ($f in Get-ChildItem (Join-Path $data 'logs') -Filter 'yanmt-*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime) {
+        $stream = [System.IO.File]::Open($f.FullName, 'Open', 'Read', 'ReadWrite, Delete')
+        try { ([System.IO.StreamReader]::new($stream)).ReadToEnd() -split "`r?`n" } finally { $stream.Dispose() }
+    }
+    return @($lines | Where-Object { $_ -like '*Installer settings from HKLM*' })
+}
+
 function Get-Products {
     @(Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
         Where-Object { $_.PSObject.Properties['DisplayName'] -and $_.DisplayName -eq 'YANMT' })
@@ -210,6 +228,28 @@ try {
     Check ((Select-String -Path (Join-Path $LogDir 'bad-thumbprint.log') -Pattern 'No certificate with thumbprint' -Quiet)) 'bad thumbprint: the log says why'
 
     # --------------------------------------------------------------------------------------------
+    Step '2b. A custom Yanmt:DataPath is refused before anything changes'
+    $settingsFile = Join-Path $app 'appsettings.json'
+    $original = Get-Content $settingsFile -Raw
+    $json = $original | ConvertFrom-Json
+    $json.Yanmt.DataPath = 'C:\YanmtCustomData'
+    $json | ConvertTo-Json -Depth 10 | Set-Content $settingsFile -Encoding utf8
+    $code = Invoke-Msi 'custom-datapath-json.log' @('/i', $Msi1, "CERT_THUMBPRINT=$thumb", 'ADMIN_GROUPS=.\YANMT-Admins')
+    Set-Content $settingsFile $original -NoNewline -Encoding utf8
+    Check ($code -eq 1603) "custom DataPath in appsettings.json: refused (got $code)"
+    Check ((Select-String -Path (Join-Path $LogDir 'custom-datapath-json.log') -Pattern 'sets Yanmt:DataPath' -Quiet)) 'custom DataPath in appsettings.json: the log says why'
+
+    [Environment]::SetEnvironmentVariable('Yanmt__DataPath', 'D:\YanmtElsewhere', 'Machine')
+    $code = Invoke-Msi 'custom-datapath-env.log' @('/i', $Msi1, "CERT_THUMBPRINT=$thumb", 'ADMIN_GROUPS=.\YANMT-Admins')
+    [Environment]::SetEnvironmentVariable('Yanmt__DataPath', $null, 'Machine')
+    Check ($code -eq 1603) "custom DataPath in a machine environment variable: refused (got $code)"
+    Check ((Select-String -Path (Join-Path $LogDir 'custom-datapath-env.log') -Pattern 'Yanmt__DataPath' -Quiet)) 'custom DataPath in a machine environment variable: the log says why'
+
+    $svc = Get-Service-Info
+    Check ($svc.StartName -like '*\svc-yanmt' -and $svc.State -eq 'Running') 'custom DataPath: the manual service is untouched and running'
+    Check (@(Get-Products).Count -eq 0) 'custom DataPath: nothing installed'
+
+    # --------------------------------------------------------------------------------------------
     Step '3. MSI v1 over the manual install'
     $code = Invoke-Msi 'install-v1.log' @('/i', $Msi1, "CERT_THUMBPRINT=$($thumb.Insert(20, ' '))", 'ADMIN_GROUPS=.\YANMT-Admins',
         'VIEWER_GROUPS=.\YANMT-Viewers', "FIREWALL_REMOTE_ADDRESS=$remote", "PORT=$port")
@@ -263,6 +303,33 @@ try {
     Check ($null -ne (Get-Rule)) 'upgrade: firewall rule kept'
     $backups = @(Get-ChildItem "$data\backups\pre-upgrade" -Directory -ErrorAction SilentlyContinue)
     Check ($backups.Count -eq 1 -and $backups[0].Name -like '0.0.1*' -and (Test-Path "$($backups[0].FullName)\yanmt.db") -and (Test-Path "$($backups[0].FullName)\secrets.entropy")) 'upgrade: database and secrets.entropy backed up to backups\pre-upgrade\0.0.1-*'
+
+    $last = @(Get-InstallerSettingsLines) | Select-Object -Last 1
+    Check ("$last" -match 'ViewerGroups') "upgrade: the app takes ViewerGroups from the registry ($last)"
+
+    # --------------------------------------------------------------------------------------------
+    Step '4b. Change (silent): clear the viewer groups and the firewall scope'
+    $before = @(Get-InstallerSettingsLines).Count
+    $code = Invoke-Msi 'clear-settings.log' @('/i', $Msi2, 'CLEAR_VIEWER_GROUPS=1', 'CLEAR_FIREWALL_REMOTE_ADDRESS=1')
+    Check ($code -eq 0) "clear: exit code 0 (got $code)"
+    Check ($null -eq (Get-Rule)) 'clear: firewall rule removed'
+    Check ($null -eq (Get-Setting 'FirewallRemoteAddress')) 'clear: FirewallRemoteAddress removed from the registry'
+    Check ($null -eq (Get-Setting 'ViewerGroups')) 'clear: ViewerGroups removed from the registry'
+    Check ((Get-Setting 'AdminGroups') -eq '.\YANMT-Admins' -and (Get-Setting 'CertificateThumbprint') -eq $thumb) 'clear: other settings kept'
+    Check (Wait-Until { (Get-Service YANMT).Status -eq 'Running' } 60) 'clear: service is running'
+    Check (Wait-Until { @(Get-InstallerSettingsLines).Count -gt $before } 60) 'clear: the service restarted with the new settings'
+    $last = @(Get-InstallerSettingsLines) | Select-Object -Last 1
+    Check ("$last" -notmatch 'ViewerGroups' -and "$last" -match 'AdminGroups') "clear: the app no longer takes ViewerGroups from the registry ($last)"
+
+    Step '4c. Change (silent): set them again'
+    $before = @(Get-InstallerSettingsLines).Count
+    $code = Invoke-Msi 'set-settings.log' @('/i', $Msi2, 'VIEWER_GROUPS=.\YANMT-Viewers', "FIREWALL_REMOTE_ADDRESS=$remote")
+    Check ($code -eq 0) "set again: exit code 0 (got $code)"
+    Check ($null -ne (Get-Rule)) 'set again: firewall rule back'
+    Check ((Get-Setting 'ViewerGroups') -eq '.\YANMT-Viewers' -and (Get-Setting 'FirewallRemoteAddress') -eq $remote) 'set again: values stored'
+    Check (Wait-Until { @(Get-InstallerSettingsLines).Count -gt $before } 60) 'set again: the service restarted'
+    $last = @(Get-InstallerSettingsLines) | Select-Object -Last 1
+    Check ("$last" -match 'ViewerGroups') 'set again: the app takes ViewerGroups from the registry'
 
     # --------------------------------------------------------------------------------------------
     Step '5. Downgrade to v1 is refused'
