@@ -297,7 +297,7 @@ try {
     Check (Wait-Until { (Get-HttpStatus) -eq '401' } 60) 'upgrade: HTTPS answers 401'
     Check ((Get-Marker) -eq 42) 'upgrade: hand-edited appsettings.json kept'
     $products = @(Get-Products)
-    Check ($products.Count -eq 1 -and $products[0].DisplayVersion -eq '0.0.2') "upgrade: only v2 is installed ($(($products | ForEach-Object DisplayVersion) -join ', '))"
+    Check ($products.Count -eq 1 -and $products[0].DisplayVersion -eq '0.0.65535') "upgrade: only v2 is installed ($(($products | ForEach-Object DisplayVersion) -join ', '))"
     $reg = Get-Settings
     Check ($reg.CertificateThumbprint -eq $thumb -and $reg.AdminGroups -eq '.\YANMT-Admins' -and $reg.FirewallRemoteAddress -eq $remote) 'upgrade: settings read back from the registry'
     Check ($null -ne (Get-Rule)) 'upgrade: firewall rule kept'
@@ -335,7 +335,7 @@ try {
     Step '5. Downgrade to v1 is refused'
     $code = Invoke-Msi 'downgrade-v1.log' @('/i', $Msi1)
     Check ($code -ne 0) "downgrade: refused (exit code $code)"
-    Check (@(Get-Products)[0].DisplayVersion -eq '0.0.2') 'downgrade: v2 still installed'
+    Check (@(Get-Products)[0].DisplayVersion -eq '0.0.65535') 'downgrade: v2 still installed'
     Check ((Get-Service YANMT).Status -eq 'Running') 'downgrade: service still running'
 
     # --------------------------------------------------------------------------------------------

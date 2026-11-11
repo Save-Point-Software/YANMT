@@ -57,10 +57,14 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          dotnet publish src/Yanmt.Web -c Release -r win-x64 -p:Version=$env:VERSION -o publish
+          # AssemblyVersion parts must be at most 65534 (CS7034), but an MSI build number may be 65535, so
+          # it is X.Y.0.0. Nothing in YANMT reads the assembly version. FileVersion would follow
+          # AssemblyVersion, so it is set to X.Y.Z.0 explicitly; ProductVersion comes from Version.
+          $assembly = ($env:VERSION -split '\.')[0..1] -join '.'
+          dotnet publish src/Yanmt.Web -c Release -r win-x64 -p:Version=$env:VERSION -p:AssemblyVersion="$assembly.0.0" -p:FileVersion="$env:VERSION.0" -o publish
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $exe = (Get-Item publish/yanmt.exe).VersionInfo
-          if ($exe.FileVersion -ne "$env:VERSION.0") { throw "yanmt.exe has file version $($exe.FileVersion), expected $env:VERSION." }
+          if ($exe.FileVersion -ne "$env:VERSION.0") { throw "yanmt.exe has file version $($exe.FileVersion), expected $env:VERSION.0." }
 
       - name: Build MSI
         shell: pwsh
