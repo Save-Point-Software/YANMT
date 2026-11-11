@@ -97,11 +97,20 @@ $account = 'CONTOSO\svc-yanmt$'
 
 ```powershell
 # Data folder: Modify for the service account and Full control for admins and SYSTEM, no inherited access for others.
-icacls $data /inheritance:r /grant "${account}:(OI)(CI)M" 'BUILTIN\Administrators:(OI)(CI)F' 'NT AUTHORITY\SYSTEM:(OI)(CI)F' /T
-icacls $app  /inheritance:r /grant "${account}:(OI)(CI)RX" 'BUILTIN\Administrators:(OI)(CI)F' 'NT AUTHORITY\SYSTEM:(OI)(CI)F' /T
+icacls $data /inheritance:r /grant "${account}:(OI)(CI)M" 'BUILTIN\Administrators:(OI)(CI)F' 'NT AUTHORITY\SYSTEM:(OI)(CI)F'
+icacls $app  /inheritance:r /grant "${account}:(OI)(CI)RX" 'BUILTIN\Administrators:(OI)(CI)F' 'NT AUTHORITY\SYSTEM:(OI)(CI)F'
+# Files already in the folders: drop their own ACEs and inherit the folder ACL above.
+icacls "$app\*" /reset /T /Q
+icacls "$data\*" /reset /T /Q
+# secrets.entropy (if it exists yet) keeps its own protected ACL, as YANMT creates it.
+if (Test-Path "$data\secrets.entropy") {
+    icacls "$data\secrets.entropy" /inheritance:r /grant "${account}:M" 'BUILTIN\Administrators:F' 'NT AUTHORITY\SYSTEM:F'
+}
 ```
 
-`/T` applies the grant to files that already exist in the folders as well, not only to new ones.
+Don't add `/T` to the first two commands. On a file, `/inheritance:r` removes the inherited ACEs and the
+`(OI)(CI)` grants don't apply, so every existing file is left with an **empty DACL** (nobody, not even an
+admin, can read it; the service fails with error 5). The `/reset` lines handle existing files instead.
 
 Keep the data folder locked down. The database holds DPAPI-encrypted device credentials and
 `secrets.entropy` is part of the key material, so anyone who can read both on this machine can
@@ -306,6 +315,20 @@ Remove-Item $app -Recurse
 # Remove-Item $data -Recurse
 ```
 
+**MSI installs:** uninstalling with the MSI also deletes `appsettings.json` from the install folder
+(an upgrade keeps it). Copy it somewhere else first if you edited it and want to keep it. The data
+folder is kept, as above.
+
+### After moving a manual install to the MSI
+
+The MSI replaces the old service, which then runs as `NT SERVICE\YANMT`, and removes the old account's
+grants from the data folder. It doesn't delete the local `svc-yanmt` account. Once the service runs
+under the MSI, you can remove that account:
+
+```powershell
+Remove-LocalUser svc-yanmt
+```
+
 ## 4. Configuration reference
 
 Settings live in `appsettings.json` next to the exe. **It holds no secrets.** Device credentials are
@@ -386,7 +409,10 @@ Stop-Service YANMT
 Rename-Item $data "$data.before-restore"
 Copy-Item $bk $data -Recurse
 # Re-apply the data folder ACL: a copied folder inherits the parent's permissions, not section 2.3's.
-icacls $data /inheritance:r /grant "${account}:(OI)(CI)M" 'BUILTIN\Administrators:(OI)(CI)F' 'NT AUTHORITY\SYSTEM:(OI)(CI)F' /T
+# No /T on the first line (it would leave every restored file with an empty DACL, see section 2.3).
+icacls $data /inheritance:r /grant "${account}:(OI)(CI)M" 'BUILTIN\Administrators:(OI)(CI)F' 'NT AUTHORITY\SYSTEM:(OI)(CI)F'
+icacls "$data\*" /reset /T /Q
+icacls "$data\secrets.entropy" /inheritance:r /grant "${account}:M" 'BUILTIN\Administrators:F' 'NT AUTHORITY\SYSTEM:F'
 Start-Service YANMT
 ```
 
