@@ -32,6 +32,10 @@ try
     });
     builder.Services.AddWindowsService(o => o.ServiceName = "YANMT");
 
+    // Settings from the MSI (HKLM\SOFTWARE\YANMT), above appsettings.json. Must run before any
+    // section is read below.
+    var installerSettings = InstallerConfiguration.Add(builder.Configuration);
+
     var yanmtOptions = builder.Configuration.GetSection(YanmtOptions.SectionName).Get<YanmtOptions>() ?? new();
     var paths = YanmtPaths.Resolve(yanmtOptions.DataPath, builder.Environment.ContentRootPath);
     paths.EnsureCreated();
@@ -107,6 +111,11 @@ try
     startupLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Yanmt.Startup");
     startupLogger.LogInformation("YANMT starting. Data folder: {DataPath}. Listening on https port {Port}. So far: {Timings}",
         paths.Root, https.Port, trace.Summary());
+    if (installerSettings.Count > 0)
+    {
+        startupLogger.LogInformation(@"Installer settings from HKLM\{Key} override appsettings.json: {Settings}",
+            Yanmt.Core.Installer.InstallerSettings.RegistryKeyPath, string.Join(", ", installerSettings));
+    }
 
     // Windows allows 30 s from process creation until the service connects. Migrations and the
     // credential key run after that (StartupInitializer); this flags a slow runtime, profile, or certificate.

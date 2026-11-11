@@ -312,6 +312,13 @@ Settings live in `appsettings.json` next to the exe. **It holds no secrets.** De
 stored encrypted in the database. Any key can also be set with an environment variable using `__` as
 the separator (for example `Yanmt__Https__Port=9443`). Restart the service after changes.
 
+**Installer settings.** The MSI (issue #40) stores `PORT`, `CERT_THUMBPRINT`, `ADMIN_GROUPS` and
+`VIEWER_GROUPS` under `HKLM\SOFTWARE\YANMT` (values `Port`, `CertificateThumbprint`, `AdminGroups`,
+`ViewerGroups`; group lists separated by `;`). They override `appsettings.json`, and environment
+variables override them. An empty or missing value leaves `appsettings.json` in charge, and a manual
+install has no such key. Change them by running the installer again (*Change*), not in `appsettings.json`.
+The startup log names the settings that came from the registry.
+
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `Yanmt:DataPath` | empty (`%ProgramData%\YANMT`) | Data folder. Environment variables are expanded; a relative path is relative to the install folder. |

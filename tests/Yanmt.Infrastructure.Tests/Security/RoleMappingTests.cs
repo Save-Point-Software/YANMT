@@ -51,6 +51,19 @@ public class RoleMappingTests
     }
 
     [Fact]
+    public void Repeated_names_are_resolved_and_reported_once()
+    {
+        // Installer settings repeat the last group to cover a longer list in appsettings.json.
+        var map = RoleGroupMap.Resolve(new RoleGroupOptions
+        {
+            AdminGroups = [Everyone, Everyone, @"NOSUCHDOMAIN\No-Such-Group-7f3a", @"nosuchdomain\no-such-group-7f3a"],
+        });
+
+        Assert.Single(map.AdminSids);
+        Assert.Single(map.Problems, p => p.Contains("No-Such-Group-7f3a", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void Empty_configuration_is_reported()
     {
         var map = RoleGroupMap.Resolve(new RoleGroupOptions());
