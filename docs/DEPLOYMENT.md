@@ -125,12 +125,29 @@ the check below it. In the v1 shakedown a scripted grant didn't take effect, so 
 
 ```powershell
 if (-not $cert) { throw 'Set $cert first (section 2.2).' }
-$key  = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cert)
-$name = if ($key -is [System.Security.Cryptography.RSACng]) { $key.Key.UniqueName }
-        else { $key.CspKeyContainerInfo.UniqueKeyContainerName }
-$file = Join-Path $env:ProgramData "Microsoft\Crypto\Keys\$name"                       # CNG keys
-if (-not (Test-Path $file)) { $file = Join-Path $env:ProgramData "Microsoft\Crypto\RSA\MachineKeys\$name" }   # CSP keys
-if (-not (Test-Path $file)) { throw "Private key file not found for $($cert.Thumbprint). Use certlm.msc instead." }
+if (-not $cert.HasPrivateKey) { throw "Certificate $($cert.Thumbprint) has no private key." }
+
+# RSA or ECDSA; anything else stops here.
+$key = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cert)
+if (-not $key) { $key = [System.Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPrivateKey($cert) }
+
+$name = $null
+if ($key -is [System.Security.Cryptography.RSACng] -or $key -is [System.Security.Cryptography.ECDsaCng]) {
+    $name = $key.Key.UniqueName                                    # CNG key (RSA or ECDSA)
+} elseif ($key -is [System.Security.Cryptography.RSACryptoServiceProvider]) {
+    $name = $key.CspKeyContainerInfo.UniqueKeyContainerName        # legacy CSP key (RSA only)
+}
+if ([string]::IsNullOrWhiteSpace($name)) {
+    throw "Unsupported or unreadable private key on $($cert.Thumbprint). Use certlm.msc instead."
+}
+
+$file = Join-Path $env:ProgramData "Microsoft\Crypto\Keys\$name"
+if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+    $file = Join-Path $env:ProgramData "Microsoft\Crypto\RSA\MachineKeys\$name"
+}
+if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+    throw "Private key file not found for $($cert.Thumbprint). Use certlm.msc instead."
+}
 icacls $file /grant "${account}:R"
 ```
 
