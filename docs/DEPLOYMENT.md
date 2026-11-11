@@ -1,9 +1,13 @@
 # YANMT deployment guide (Windows Server, PowerShell)
 
 YANMT ships as one self-contained `yanmt.exe` that runs as a Windows service. Nothing else is installed on
-the server: no .NET runtime, IIS, database server, Python or Node. Run every command below from an
-elevated PowerShell prompt. Replace the example names (`CONTOSO\svc-yanmt$`, `YANMT-Admins`, the thumbprint)
+the server: no .NET runtime, IIS, database server, Python or Node. Run every command below from the same
+elevated PowerShell prompt; later steps reuse variables (`$app`, `$data`, `$cert`, `$account`) set by
+earlier ones. Replace the example names (`svc-yanmt`, `YANMT-Admins`, `CONTOSO`, the management subnet)
 with your own.
+
+The steps are in the order they must run: the certificate before its private-key grant, and the account,
+groups and configuration before the service's first start.
 
 ## 1. Build the package
 
@@ -31,60 +35,197 @@ Copy-Item .\publish\* -Destination $app -Recurse -Force
 The data folder defaults to `%ProgramData%\YANMT`. To move it, set `Yanmt:DataPath` in `appsettings.json`
 (see section 4). YANMT creates `logs`, `backups` and `maps` inside it at startup.
 
-### 2.2 Service account
+### 2.2 Certificate
 
-Run YANMT as a dedicated low-privilege account, not LocalSystem. A gMSA is preferred. The account needs:
+YANMT serves HTTPS only and binds the certificate itself through Kestrel: there is no
+`netsh http add sslcert` step. The certificate must be in `LocalMachine\My` before you grant the service
+account access to its private key (section 2.3).
+
+**Production:** use a certificate from your internal CA (or a public one) with the server's DNS name in the
+subject alternative names. Import it into `LocalMachine\My`, then load it:
+
+```powershell
+$cert = Get-Item 'Cert:\LocalMachine\My\A1B2C3D4E5F60718293A4B5C6D7E8F9012345678'   # your thumbprint
+```
+
+**Lab only:** a self-signed certificate for the computer name. Browsers will warn about it unless you trust it
+on the client.
+
+```powershell
+$cert = New-SelfSignedCertificate -DnsName $env:COMPUTERNAME -CertStoreLocation Cert:\LocalMachine\My
+```
+
+Either way, note the thumbprint for `Yanmt:Https:CertificateThumbprint` (section 2.5):
+
+```powershell
+$cert.Thumbprint
+```
+
+### 2.3 Service account
+
+Run YANMT as a dedicated low-privilege account, not LocalSystem. On a domain a gMSA is preferred; on a
+workgroup server use a local account. The account needs:
 
 | Right | Why |
 | --- | --- |
-| Log on as a service | Start as a service. Grant it with Local Security Policy or a GPO (*Log on as a service*). |
+| Log on as a service | Start as a service. See the note at the end of section 2.6. |
 | Modify on the data folder | Database, WAL files, backups, map images, logs, `secrets.entropy`. |
 | Read and execute on the install folder | Run the exe. |
 | Read on the certificate's private key | Kestrel loads the HTTPS certificate at startup. |
 
-```powershell
-$account = 'CONTOSO\svc-yanmt$'      # gMSA; use '.\svc-yanmt' for a local account
+#### Create the account
 
-# Data folder: Modify for the service account and Full control for admins and SYSTEM, no inherited access for others.
-icacls $data /inheritance:r /grant "${account}:(OI)(CI)M" 'BUILTIN\Administrators:(OI)(CI)F' 'NT AUTHORITY\SYSTEM:(OI)(CI)F'
-icacls $app  /inheritance:r /grant "${account}:(OI)(CI)RX" 'BUILTIN\Administrators:(OI)(CI)F' 'NT AUTHORITY\SYSTEM:(OI)(CI)F'
+**Workgroup (local account):**
+
+```powershell
+New-LocalUser svc-yanmt -Password (Read-Host -AsSecureString 'svc-yanmt password') -PasswordNeverExpires `
+    -Description 'YANMT service account'
+$account = "$env:COMPUTERNAME\svc-yanmt"
 ```
+
+Use the `COMPUTERNAME\name` form. `icacls` does not resolve `.\svc-yanmt`, and a domain-style name that
+doesn't exist (such as the `CONTOSO` placeholder) fails with "No mapping between account names and security
+IDs".
+
+**Domain (gMSA):** create the gMSA in AD, install it on the server with `Install-ADServiceAccount`, then:
+
+```powershell
+$account = 'CONTOSO\svc-yanmt$'
+```
+
+#### Folder permissions
+
+```powershell
+# Data folder: Modify for the service account and Full control for admins and SYSTEM, no inherited access for others.
+icacls $data /inheritance:r /grant "${account}:(OI)(CI)M" 'BUILTIN\Administrators:(OI)(CI)F' 'NT AUTHORITY\SYSTEM:(OI)(CI)F' /T
+icacls $app  /inheritance:r /grant "${account}:(OI)(CI)RX" 'BUILTIN\Administrators:(OI)(CI)F' 'NT AUTHORITY\SYSTEM:(OI)(CI)F' /T
+```
+
+`/T` applies the grant to files that already exist in the folders as well, not only to new ones.
 
 Keep the data folder locked down. The database holds DPAPI-encrypted device credentials and
 `secrets.entropy` is part of the key material, so anyone who can read both on this machine can
 decrypt them.
 
-Certificate private key access (certificate in `LocalMachine\My`):
+#### Certificate private key
+
+The service must be able to read the certificate's private key. If it can't, startup fails with
+"Keyset does not exist" or a message naming the thumbprint.
+
+**Certificate console (recommended):**
+
+1. Run `certlm.msc`.
+2. Open *Personal > Certificates* and right-click the YANMT certificate.
+3. *All Tasks > Manage Private Keys*.
+4. *Add* the service account (for a local account, set *From this location* to the server itself),
+   give it **Read** only (clear *Full control*), and click *OK*.
+
+**Script (alternative):** run this only after the certificate exists (`$cert` from section 2.2), then run
+the check below it. In the v1 shakedown a scripted grant didn't take effect, so don't skip the check.
 
 ```powershell
-$thumb = 'A1B2C3D4E5F60718293A4B5C6D7E8F9012345678'
-$cert  = Get-Item "Cert:\LocalMachine\My\$thumb"
-$key   = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cert)
-$file  = Join-Path $env:ProgramData "Microsoft\Crypto\Keys\$($key.Key.UniqueName)"   # CNG keys
-if (-not (Test-Path $file)) { $file = Join-Path $env:ProgramData "Microsoft\Crypto\RSA\MachineKeys\$($key.Key.UniqueName)" }
+if (-not $cert) { throw 'Set $cert first (section 2.2).' }
+if (-not $cert.HasPrivateKey) { throw "Certificate $($cert.Thumbprint) has no private key." }
+
+# RSA or ECDSA; anything else stops here.
+$key = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cert)
+if (-not $key) { $key = [System.Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPrivateKey($cert) }
+
+$name = $null
+if ($key -is [System.Security.Cryptography.RSACng] -or $key -is [System.Security.Cryptography.ECDsaCng]) {
+    $name = $key.Key.UniqueName                                    # CNG key (RSA or ECDSA)
+} elseif ($key -is [System.Security.Cryptography.RSACryptoServiceProvider]) {
+    $name = $key.CspKeyContainerInfo.UniqueKeyContainerName        # legacy CSP key (RSA only)
+}
+if ([string]::IsNullOrWhiteSpace($name)) {
+    throw "Unsupported or unreadable private key on $($cert.Thumbprint). Use certlm.msc instead."
+}
+
+$file = Join-Path $env:ProgramData "Microsoft\Crypto\Keys\$name"
+if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+    $file = Join-Path $env:ProgramData "Microsoft\Crypto\RSA\MachineKeys\$name"
+}
+if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+    throw "Private key file not found for $($cert.Thumbprint). Use certlm.msc instead."
+}
 icacls $file /grant "${account}:R"
 ```
 
-(Or use the certificate MMC: *All Tasks > Manage Private Keys*.) The service must be able to read the key
-or startup fails with a message naming the thumbprint.
-
-### 2.3 Configuration
-
-Edit `$app\appsettings.json` (section 4): set at least `Yanmt:Https:CertificateThumbprint` and
-`Yanmt:Roles`. HTTPS only; there is no HTTP listener.
-
-### 2.4 Register and start the service
-
-Local account (prompts for the password):
+Check that the grant took effect (with either method):
 
 ```powershell
-New-Service -Name YANMT -DisplayName 'YANMT network monitor' `
-    -BinaryPathName "`"$app\yanmt.exe`"" -StartupType Automatic `
-    -Credential (Get-Credential '.\svc-yanmt') `
-    -Description 'Read-only SNMP/ICMP/SSH network monitor'
+icacls $file          # after the script; the service account must be listed with (R)
 ```
 
-gMSA (empty password; install it first with `Install-ADServiceAccount`):
+After the console method, reopen *Manage Private Keys* and confirm the account is listed with *Read*.
+If it isn't there, the service will fail with "Keyset does not exist".
+
+### 2.4 Windows groups
+
+Authentication is Windows Integrated (Negotiate). Create the groups **before** the configuration and the
+service's first start; they are referenced in `appsettings.json` (section 2.5).
+
+**Workgroup (local groups):**
+
+```powershell
+New-LocalGroup -Name 'YANMT-Admins'  -Description 'YANMT administrators'
+New-LocalGroup -Name 'YANMT-Viewers' -Description 'YANMT read-only users'
+Add-LocalGroupMember -Group 'YANMT-Admins' -Member "$env:COMPUTERNAME\alice"
+```
+
+**Domain:** create `YANMT-Admins` and `YANMT-Viewers` in AD (or use local groups containing domain users)
+and add your people.
+
+### 2.5 Configuration
+
+Edit `$app\appsettings.json` (full reference in section 4). Set at least the certificate thumbprint from
+section 2.2 and the groups from section 2.4. HTTPS only; there is no HTTP listener.
+
+Workgroup, local groups:
+
+```json
+{
+  "Yanmt": {
+    "Https": { "Port": 8443, "CertificateThumbprint": "A1B2C3D4E5F60718293A4B5C6D7E8F9012345678" },
+    "Roles": { "AdminGroups": [ ".\\YANMT-Admins" ], "ViewerGroups": [ ".\\YANMT-Viewers" ] }
+  }
+}
+```
+
+Domain groups:
+
+```json
+    "Roles": { "AdminGroups": [ "CONTOSO\\YANMT-Admins" ], "ViewerGroups": [ "CONTOSO\\YANMT-Viewers" ] }
+```
+
+- JSON needs the backslash doubled: `".\\YANMT-Admins"` in the file is the group `.\YANMT-Admins`.
+  A single backslash is invalid JSON or silently changes the name.
+- `.\` means a local group on this server.
+- On a domain use `DOMAIN\\Group` (the NetBIOS domain name, backslash doubled).
+- The thumbprint has no spaces.
+
+### 2.6 Register and start the service
+
+> **Don't run `yanmt.exe` by hand as an administrator before the service has started once.** The first run
+> creates `$data\secrets.entropy` with an ACL that only the account running it (plus SYSTEM and
+> Administrators) can read. If that is your admin account, the service then fails with
+> "Cannot read or create ...secrets.entropy". See section 6 for the fix.
+
+**Local account:** build the credential from the full `COMPUTERNAME\name` (the Server 2025 credential
+dialog rejects `.\svc-yanmt` in `Get-Credential`):
+
+```powershell
+$cred = New-Object System.Management.Automation.PSCredential("$env:COMPUTERNAME\svc-yanmt", (Read-Host -AsSecureString 'svc-yanmt password'))
+
+New-Service -Name YANMT -DisplayName 'YANMT network monitor' `
+    -BinaryPathName "`"$app\yanmt.exe`"" -StartupType Automatic `
+    -Credential $cred `
+    -Description 'Read-only SNMP/ICMP/SSH network monitor'
+sc.exe failure YANMT reset= 86400 actions= restart/60000/restart/60000/restart/60000
+Start-Service YANMT
+```
+
+**gMSA** (empty password; install it first with `Install-ADServiceAccount`):
 
 ```powershell
 sc.exe create YANMT binPath= "`"$app\yanmt.exe`"" start= auto obj= $account password= '""' DisplayName= 'YANMT network monitor'
@@ -93,46 +234,39 @@ sc.exe failure YANMT reset= 86400 actions= restart/60000/restart/60000/restart/6
 Start-Service YANMT
 ```
 
-The service name must be `YANMT`. Startup problems are written to the Application event log and to
-`$data\logs`.
+The service name must be `YANMT`. Check it is running with `Get-Service YANMT`. If it doesn't start, see
+section 6.
 
-### 2.5 Certificate
+**Log on as a service (error 1069):** the first `Start-Service` can fail with a logon error (1069, "The
+service did not start due to a logon failure") if the account lacks *Log on as a service*. Fix: open
+`services.msc` > *YANMT* > *Properties* > *Log On*, re-type the account's password in both boxes, click *OK*
+(Windows grants the right when you do this), then start the service again. You can also grant the right in
+Local Security Policy or a GPO (*User Rights Assignment > Log on as a service*).
 
-Use a certificate from your internal CA (or a public one) with the server's DNS name in the subject
-alternative names, installed in `LocalMachine\My`. YANMT binds it itself through Kestrel: there is no
-`netsh http add sslcert` step. Put the thumbprint (no spaces) in `Yanmt:Https:CertificateThumbprint`.
-
-### 2.6 Firewall
+### 2.7 Firewall
 
 ```powershell
+$mgmtSubnet = '192.0.2.0/24'   # REPLACE with your management subnet (this is a documentation example)
+
 New-NetFirewallRule -DisplayName 'YANMT web UI' -Direction Inbound -Protocol TCP -LocalPort 8443 `
-    -Action Allow -Profile Domain,Private -RemoteAddress 192.0.2.0/24
+    -Action Allow -Profile Domain,Private -RemoteAddress $mgmtSubnet
 ```
 
 `-Profile Domain,Private` matters on servers that aren't domain-joined: their network is usually classified
 as Private (or Public), so a rule limited to `Domain` never matches and the UI is unreachable from other
 machines. Check the profile with `Get-NetConnectionProfile`. Don't add `Public`.
 
-Use your own management subnet and the port from `Yanmt:Https:Port`. YANMT's outbound traffic needs
-ICMP echo, UDP 161 (SNMP) and TCP 22 (SSH) to the devices.
+Use the port from `Yanmt:Https:Port`. YANMT's outbound traffic needs ICMP echo, UDP 161 (SNMP) and TCP 22
+(SSH) to the devices.
 
-### 2.7 Windows groups and first sign-in
-
-Authentication is Windows Integrated (Negotiate). Create two groups (AD or local), add them under
-`Yanmt:Roles`, and add your people:
-
-```powershell
-New-LocalGroup -Name 'YANMT-Admins'  -Description 'YANMT administrators'
-New-LocalGroup -Name 'YANMT-Viewers' -Description 'YANMT read-only users'
-Add-LocalGroupMember -Group 'YANMT-Admins' -Member 'CONTOSO\alice'
-```
+### 2.8 First sign-in
 
 Browse to `https://<server-dns-name>:8443/`. Use the DNS name that matches the certificate and that your
 browser treats as intranet, otherwise it will prompt for credentials instead of signing in silently.
 A user in neither group gets "Access denied"; after changing group membership they must sign out of
 Windows and back in.
 
-### 2.8 Antivirus
+### 2.9 Antivirus
 
 If Defender (or another AV) scans the data folder, the SQLite database and its `-wal` / `-shm` files can
 be slowed or locked. Add exclusions:
@@ -186,7 +320,7 @@ the separator (for example `Yanmt__Https__Port=9443`). Restart the service after
 | `Yanmt:Https:ListenAddress` | empty (all addresses) | A single IP address to bind to. |
 | `Yanmt:Https:CertificateThumbprint` | empty | Certificate to serve. Required outside development. |
 | `Yanmt:Https:StoreName` / `StoreLocation` | `My` / `LocalMachine` | Where to find the certificate. |
-| `Yanmt:Roles:AdminGroups` | empty | Groups with full access: `CONTOSO\YANMT-Admins`, `YANMT-Admins` or `.\YANMT-Admins` (local), or a SID. |
+| `Yanmt:Roles:AdminGroups` | empty | Groups with full access: `CONTOSO\YANMT-Admins`, `YANMT-Admins` or `.\YANMT-Admins` (local), or a SID. Double each backslash in JSON (section 2.5). |
 | `Yanmt:Roles:ViewerGroups` | empty | Groups with read-only access. |
 | `Yanmt:Logging:MaxFileSizeBytes` | `10485760` | Log file size before rolling. |
 | `Yanmt:Logging:RetainedFileCount` | `30` | Log files kept. |
@@ -198,7 +332,7 @@ the separator (for example `Yanmt__Https__Port=9443`). Restart the service after
 Data retention (raw samples, rollups, events, config versions) and the other runtime settings are
 changed in the web UI under *Settings*, not in `appsettings.json`.
 
-Example:
+Example (domain groups; see section 2.5 for local groups):
 
 ```json
 {
@@ -239,8 +373,27 @@ itself: it holds the encrypted credentials and `secrets.entropy`.
 
 ### Restore on the same server
 
-Stop the service, restore the whole data folder (database, `secrets.entropy`, `backups`, `maps`), check the
-ACLs from section 2.2, start the service.
+```powershell
+$bk = '\\backup-host\yanmt\20261110'   # the backup folder to restore
+
+Stop-Service YANMT
+Rename-Item $data "$data.before-restore"
+Copy-Item $bk $data -Recurse
+# Re-apply the data folder ACL: a copied folder inherits the parent's permissions, not section 2.3's.
+icacls $data /inheritance:r /grant "${account}:(OI)(CI)M" 'BUILTIN\Administrators:(OI)(CI)F' 'NT AUTHORITY\SYSTEM:(OI)(CI)F' /T
+Start-Service YANMT
+```
+
+Verify:
+
+1. `Get-Service YANMT` shows *Running*.
+2. *Poll now* on a node works. This proves the restored credentials decrypt.
+3. *Back up now* on a node works. This proves SSH and the pinned host key.
+
+Then remove the old copy: `Remove-Item "$data.before-restore" -Recurse`.
+
+The backup folder holds the encrypted credentials and `secrets.entropy`. Protect it and any leftover
+`.before-restore` copy like the server itself.
 
 ### Restore on a different server: the DPAPI caveat
 
@@ -280,4 +433,61 @@ Other notes for a new server:
 - The ICMP, SNMP and SSH paths from the new server must be allowed by device ACLs and the management firewall.
 - SSH host keys are pinned per node (trust on first use) and stay in the database, so devices keep matching.
   If a device's key legitimately changed, use "Forget" next to the pinned host key in the node's connection tests, then reconnect to pin the new one.
-- Repeat section 2 (service account, certificate, groups, firewall) on the new server.
+- Repeat section 2 (certificate, service account, groups, firewall) on the new server.
+
+## 6. Troubleshooting
+
+### The service won't start
+
+Windows only reports a generic error: 1053 ("did not respond to the start or control request in a timely
+fashion") or event 7009 (timeout). The real reason is in YANMT's own logs. Read **both**:
+
+- `$data\logs\startup-failure.log`: failures before logging is up (for example a missing or unreadable
+  certificate).
+- `$data\logs\yanmt-YYYYMMDD.log` (today's date): everything after logging is up.
+
+```powershell
+Get-Content "$data\logs\startup-failure.log" -Tail 30 -ErrorAction SilentlyContinue
+Get-Content "$data\logs\yanmt-$(Get-Date -Format yyyyMMdd).log" -Tail 50
+```
+
+| Message | Cause and fix |
+| --- | --- |
+| Error 1069, logon failure | The account lacks *Log on as a service*, or the password is wrong. See the end of section 2.6. |
+| "Keyset does not exist" | The service account can't read the certificate's private key. Grant Read (section 2.3, *Certificate private key*) and verify. |
+| "Cannot read or create ...secrets.entropy" | See below. |
+| "Yanmt:Https:CertificateThumbprint is not set" | The thumbprint is missing from `$app\appsettings.json`, or (on a hand run) you started the exe from another folder. See below. |
+
+### Running yanmt.exe by hand
+
+A hand run shows errors on the console, which can be quicker than reading logs. Stop the service first (both
+can't listen on the same port), and **`cd` to the install folder first**:
+
+```powershell
+Stop-Service YANMT
+cd $app
+.\yanmt.exe
+```
+
+Run from any other folder, the exe reads the `appsettings.json` there (or none) instead of the one in
+`$app`, and reports a misleading "thumbprint is not set".
+
+A hand run uses **your** (admin) rights, not the service account's. Permission problems (private key, data
+folder, `secrets.entropy`) won't show up; when a hand run works and the service doesn't, suspect permissions.
+
+### "Cannot read or create secrets.entropy"
+
+Usually caused by running `yanmt.exe` by hand as an admin before the service's first start (section 2.6):
+the file was created with an ACL only that admin can read.
+
+- **No device credentials saved yet** (fresh install): delete the file and start the service; it recreates
+  it with the right ACL.
+
+  ```powershell
+  Remove-Item "$data\secrets.entropy"
+  Start-Service YANMT
+  ```
+
+- **Credentials already saved:** do **not** delete it. Without this file the stored credentials can't be
+  decrypted and must be re-entered. Instead, re-run the data folder `icacls` from section 2.3 (with `/T`) so
+  the service account gets access to the existing file, then start the service.
