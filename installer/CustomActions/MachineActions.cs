@@ -136,8 +136,7 @@ public static class MachineActions
     /// Real uninstall only (not the old product's removal during an upgrade), after RemoveFiles.
     /// appsettings.json is a permanent component so upgrades keep a hand-edited copy: delete it now.
     /// Then delete empty subfolders, which Windows Installer leaves when they existed before the MSI
-    /// (a manual install). Anything still holding a file is left alone. RemoveFolders then removes the
-    /// install folder itself if it's empty.
+    /// (a manual install), and the install folder itself if it's empty. Anything still holding a file is left alone.
     /// </summary>
     [CustomAction]
     public static ActionResult CleanInstallFolder(Session session)
@@ -161,6 +160,12 @@ public static class MachineActions
                     {
                         Directory.Delete(dir);
                     }
+                }
+
+                if (!Directory.EnumerateFileSystemEntries(folder).Any())
+                {
+                    Directory.Delete(folder);
+                    session.Log($"YANMT: removed the empty {folder}.");
                 }
             }
         }
