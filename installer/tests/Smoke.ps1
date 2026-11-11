@@ -53,6 +53,14 @@ function Invoke-Msi([string] $log, [string[]] $arguments) {
     $line = (@($quoted) + @('/qn', '/norestart', '/l*v', "`"$(Join-Path $LogDir $log)`"")) -join ' '
     $p = Start-Process msiexec.exe -ArgumentList $line -Wait -PassThru
     Write-Host "msiexec $line -> $($p.ExitCode)"
+    if ($p.ExitCode -notin 0, 3010) {
+        # The custom actions log "YANMT:" lines; "Return value 3" marks the action that failed.
+        $text = Get-Content (Join-Path $LogDir $log)
+        $text | Select-String -Pattern 'YANMT', 'Return value 3', 'Error \d{4}', 'Exception' | Select-Object -First 40 |
+            ForEach-Object { Write-Host "    $($_.Line)" }
+        $hit = $text | Select-String 'Return value 3' | Select-Object -First 1
+        if ($hit) { $text[[Math]::Max(0, $hit.LineNumber - 25)..($hit.LineNumber - 1)] | ForEach-Object { Write-Host "  | $_" } }
+    }
     return $p.ExitCode
 }
 
@@ -281,6 +289,8 @@ catch {
     $failures.Add("script error: $_")
     Show-Logs
 }
+
+Copy-Item (Join-Path $data 'logs') (Join-Path $LogDir 'app-logs') -Recurse -ErrorAction SilentlyContinue
 
 Write-Host ''
 if ($failures.Count -gt 0) {
