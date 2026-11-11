@@ -241,6 +241,14 @@ worst state of the enabled nodes inside it, recursively. Disabled nodes don't co
 intentionally unmonitored box doesn't gray out a site. States update live, with no refresh. Map
 structure edits by another admin show up on the next page load.
 
+**Keep screen on** (map toolbar, viewers and admins) stops the display from sleeping while the map
+is open, for a NOC screen. It uses the browser's Screen Wake Lock, so it needs HTTPS and a supporting
+browser (current Edge or Chrome). It's off by default and remembered per browser. The button is
+highlighted while the screen is being kept on; it's re-applied when the tab is shown again and
+released when you leave the map. If the browser refuses (unsupported, or battery saver), the button
+is disabled and its tooltip says why. It doesn't override a Windows policy that forces a screen lock
+or screen saver.
+
 ### Credentials
 
 SSH and SNMPv3 credentials live in reusable **credential profiles** (admin only, under

@@ -43,6 +43,7 @@
             <button class="btn" title="Fit the map to the window" @onclick="FitAsync">Fit</button>
             <button class="btn" title="Zoom in" @onclick="() => ZoomAsync(1.25)">+</button>
             <button class="btn" title="Zoom out" @onclick="() => ZoomAsync(0.8)">−</button>
+            <KeepScreenOn />
             @if (_isAdmin && _map is not null)
             {
                 <button class="btn @(_editing ? "primary" : null)" @onclick="ToggleEditAsync">@(_editing ? "Done editing" : "Edit map")</button>
