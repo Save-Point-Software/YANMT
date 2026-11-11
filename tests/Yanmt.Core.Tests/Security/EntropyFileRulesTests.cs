@@ -32,7 +32,7 @@ public class EntropyFileRulesTests
     [Fact]
     public void Unreadable_message_names_the_account_and_the_exact_icacls_command()
     {
-        var message = EntropyFileRules.UnreadableMessage(@"C:\ProgramData\YANMT\secrets.entropy", @"YANMT01\svc-yanmt", 0);
+        var message = EntropyFileRules.UnreadableMessage(@"C:\ProgramData\YANMT\secrets.entropy", @"YANMT01\svc-yanmt", new EntropyKeyUsage(0, 0));
 
         Assert.Contains(@"as YANMT01\svc-yanmt", message);
         Assert.Contains(@"icacls ""C:\ProgramData\YANMT\secrets.entropy"" /grant ""YANMT01\svc-yanmt:R""", message);
@@ -40,15 +40,36 @@ public class EntropyFileRulesTests
     }
 
     [Fact]
-    public void Unreadable_message_only_suggests_deleting_when_no_credentials_are_saved()
+    public void Retained_config_history_without_credential_profiles_still_forbids_deleting_the_key()
     {
-        var saved = EntropyFileRules.UnreadableMessage("p", "a", 3);
-        Assert.Contains("Do not delete it: 3 saved credential profile(s)", saved);
+        // An admin can delete the last credential profile and keep the node's config history.
+        var message = EntropyFileRules.UnreadableMessage("p", "a", new EntropyKeyUsage(CredentialProfiles: 0, ConfigVersions: 14));
+
+        Assert.Contains("Do not delete it: 14 config backup version(s) need it", message);
+        Assert.DoesNotContain("delete the file", message);
+    }
+
+    [Fact]
+    public void Unreadable_message_only_suggests_deleting_when_nothing_is_encrypted_with_the_key()
+    {
+        var saved = EntropyFileRules.UnreadableMessage("p", "a", new EntropyKeyUsage(3, 0));
+        Assert.Contains("Do not delete it: 3 saved credential profile(s) need it", saved);
         Assert.DoesNotContain("delete the file", saved);
 
+        var both = EntropyFileRules.UnreadableMessage("p", "a", new EntropyKeyUsage(2, 5));
+        Assert.Contains("2 saved credential profile(s) and 5 config backup version(s)", both);
+
         var unknown = EntropyFileRules.UnreadableMessage("p", "a", null);
-        Assert.Contains("Do not delete it if any device credentials are saved", unknown);
+        Assert.Contains("Do not delete it if any device credentials or config backups are saved", unknown);
+        Assert.DoesNotContain("delete the file", unknown);
     }
+
+    [Theory]
+    [InlineData(0, 0, false)]
+    [InlineData(1, 0, true)]
+    [InlineData(0, 1, true)]
+    public void Key_is_in_use_when_profiles_or_config_versions_exist(int profiles, int versions, bool inUse) =>
+        Assert.Equal(inUse, new EntropyKeyUsage(profiles, versions).InUse);
 
     [Fact]
     public void Cannot_create_message_gives_the_folder_grant()

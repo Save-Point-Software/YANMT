@@ -351,7 +351,7 @@ Everything is in the data folder (`$data`):
 | Item | Notes |
 | --- | --- |
 | `yanmt.db` (+ `yanmt.db-wal`, `yanmt.db-shm`) | Inventory, maps, monitors, settings, history, audit log, encrypted credentials. |
-| `secrets.entropy` | Extra DPAPI entropy for the stored credentials. **Without it the credentials can't be decrypted.** Back it up with the database. |
+| `secrets.entropy` | Extra DPAPI entropy for the stored credentials and config backups. **Without it neither can be decrypted.** Back it up with the database. |
 | `backups\` | Device configuration backups. |
 | `maps\` | Map background images. |
 | `appsettings.json` | In the install folder. Contains no secrets, but you need it. |
@@ -491,10 +491,11 @@ folder, `secrets.entropy`) won't show up; when a hand run works and the service 
 
 The message names the account the service runs as and the exact `icacls` command to fix it. "Cannot read"
 means the file exists but that account has no read access (it was created by an older YANMT version run by
-hand as an admin, or restored or migrated with its old permissions). It also says whether credentials are
-saved, and so whether deleting the file is safe:
+hand as an admin, or restored or migrated with its old permissions). It also says whether anything is
+encrypted with it (credential profiles **or config backup history**), and so whether deleting the file is safe:
 
-- **No device credentials saved yet** (fresh install): delete the file and start the service; it recreates
+- **No credential profiles and no config backups** (fresh install; the message says "Nothing is encrypted
+  with it yet"): delete the file and start the service; it recreates
   it with the right ACL.
 
   ```powershell
@@ -502,8 +503,9 @@ saved, and so whether deleting the file is safe:
   Start-Service YANMT
   ```
 
-- **Credentials already saved:** do **not** delete it. Without this file the stored credentials can't be
-  decrypted and must be re-entered. Grant the service account read on it (the error message has this
+- **Credential profiles or config backups exist:** do **not** delete it, even if every credential profile has
+  been deleted. Config history stays encrypted with this file; without it the history is lost for good and any
+  stored credentials must be re-entered. Grant the service account read on it (the error message has this
   command with the real path and account), then start the service:
 
   ```powershell

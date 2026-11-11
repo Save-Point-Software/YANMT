@@ -99,7 +99,7 @@ public sealed class SecretProtector
                 {
                     CreatedNewKey = true;
                     _logger.LogWarning(
-                        "Created a new credential key file at {Path}. Back it up with the database; credentials saved before it existed can't be decrypted.",
+                        "Created a new credential key file at {Path}. Back it up with the database; credentials and config backups saved before it existed can't be decrypted.",
                         _entropyPath);
                 }
 
@@ -221,7 +221,7 @@ public sealed class SecretProtector
 /// icacls fix; startup adds whether credentials are saved (and so whether deleting it is safe).
 /// </summary>
 public sealed class EntropyFileUnreadableException(string path, string account, Exception inner)
-    : InvalidOperationException(EntropyFileRules.UnreadableMessage(path, account, savedCredentialProfiles: null), inner)
+    : InvalidOperationException(EntropyFileRules.UnreadableMessage(path, account, usage: null), inner)
 {
     public string Path { get; } = path;
     public string Account { get; } = account;

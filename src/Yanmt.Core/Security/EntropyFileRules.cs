@@ -69,18 +69,18 @@ public static class EntropyFileRules
     }
 
     /// <summary>The file exists but this account can't read it (created by a hand run, restore, or migration).</summary>
-    /// <param name="savedCredentialProfiles">Credential profiles in the database, or null if unknown.</param>
-    public static string UnreadableMessage(string path, string account, int? savedCredentialProfiles)
+    /// <param name="usage">What the database holds encrypted with this key, or null if unknown.</param>
+    public static string UnreadableMessage(string path, string account, EntropyKeyUsage? usage)
     {
         var message =
             $"Cannot read {path} as {account}. The file exists, but this account has no read access to it " +
             "(it was probably created by a hand run, a restore, or a migration under another account). " +
             $"Fix, as an administrator: icacls \"{path}\" /grant \"{account}:R\" and then start the service.";
-        return savedCredentialProfiles switch
+        return usage switch
         {
-            0 => message + " No device credentials are saved yet, so you can delete the file instead; the service recreates it with the right ACL.",
-            > 0 => message + $" Do not delete it: {savedCredentialProfiles} saved credential profile(s) need it to decrypt.",
-            _ => message + " Do not delete it if any device credentials are saved: they can't be decrypted without it.",
+            { InUse: false } => message + " Nothing is encrypted with it yet (no credential profiles, no config backups), so you can delete the file instead; the service recreates it with the right ACL.",
+            { } used => message + $" Do not delete it: {used.Describe()} need it to decrypt.",
+            null => message + " Do not delete it if any device credentials or config backups are saved: they can't be decrypted without it.",
         };
     }
 
@@ -88,4 +88,27 @@ public static class EntropyFileRules
     public static string CannotCreateMessage(string path, string dataFolder, string account) =>
         $"Cannot create {path} as {account}. The account needs Modify on the data folder. " +
         $"Fix, as an administrator: icacls \"{dataFolder}\" /grant \"{account}:(OI)(CI)M\" /T and then start the service.";
+}
+
+/// <summary>What the database holds that is encrypted with the secrets.entropy key.</summary>
+public readonly record struct EntropyKeyUsage(int CredentialProfiles, int ConfigVersions)
+{
+    public bool InUse => CredentialProfiles > 0 || ConfigVersions > 0;
+
+    /// <summary>"2 saved credential profile(s) and 14 config backup version(s)", listing only what exists.</summary>
+    public string Describe()
+    {
+        var parts = new List<string>(2);
+        if (CredentialProfiles > 0)
+        {
+            parts.Add($"{CredentialProfiles} saved credential profile(s)");
+        }
+
+        if (ConfigVersions > 0)
+        {
+            parts.Add($"{ConfigVersions} config backup version(s)");
+        }
+
+        return parts.Count == 0 ? "nothing" : string.Join(" and ", parts);
+    }
 }

@@ -45,15 +45,20 @@ public sealed class StartupInitializer(
         catch (EntropyFileUnreadableException ex)
         {
             // The database is up, so say whether deleting the file would lose anything.
-            var saved = await db.CredentialProfiles.CountAsync(cancellationToken);
-            throw new InvalidOperationException(EntropyFileRules.UnreadableMessage(ex.Path, ex.Account, saved), ex);
+            var usage = await EntropyKeyUsageReader.ReadAsync(db, cancellationToken);
+            throw new InvalidOperationException(EntropyFileRules.UnreadableMessage(ex.Path, ex.Account, usage), ex);
         }
 
-        if (protector.CreatedNewKey && await db.CredentialProfiles.AnyAsync(cancellationToken))
+        if (protector.CreatedNewKey)
         {
-            logger.LogError(
-                "A new credential key file was created, but credential profiles already exist. Their passwords can't be decrypted: " +
-                "restore secrets.entropy from backup, or re-enter the passwords under Credentials.");
+            var usage = await EntropyKeyUsageReader.ReadAsync(db, cancellationToken);
+            if (usage.InUse)
+            {
+                logger.LogError(
+                    "A new credential key file was created, but {Usage} already exist. They can't be decrypted: " +
+                    "restore secrets.entropy from backup, or re-enter the passwords under Credentials (old config history stays unreadable).",
+                    usage.Describe());
+            }
         }
 
         trace.Mark("credential key");
