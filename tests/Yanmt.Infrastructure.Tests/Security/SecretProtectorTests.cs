@@ -28,6 +28,17 @@ public sealed class SecretProtectorTests : IDisposable
         Assert.Equal(secret, protector.Unprotect(blob));
     }
 
+    private static readonly SecurityIdentifier LocalSystem = new(WellKnownSidType.LocalSystemSid, null);
+    private static readonly SecurityIdentifier Admins = new(WellKnownSidType.BuiltinAdministratorsSid, null);
+    private static readonly SecurityIdentifier Users = new(WellKnownSidType.BuiltinUsersSid, null);
+    private static readonly SecurityIdentifier NetworkService = new(WellKnownSidType.NetworkServiceSid, null);
+
+    private static HashSet<SecurityIdentifier> AllowedSids(FileSystemSecurity acl) =>
+        acl.GetAccessRules(true, true, typeof(SecurityIdentifier)).Cast<FileSystemAccessRule>()
+            .Where(r => r.AccessControlType == AccessControlType.Allow)
+            .Select(r => (SecurityIdentifier)r.IdentityReference)
+            .ToHashSet();
+
     [Fact]
     public void Creates_the_entropy_file_once_with_a_protected_acl()
     {
@@ -40,20 +51,81 @@ public sealed class SecretProtectorTests : IDisposable
 
         var acl = new FileInfo(path).GetAccessControl();
         Assert.True(acl.AreAccessRulesProtected, "Entropy file must not inherit the data folder's ACL.");
-        var sids = acl.GetAccessRules(true, true, typeof(SecurityIdentifier)).Cast<FileSystemAccessRule>()
-            .Select(r => (SecurityIdentifier)r.IdentityReference)
-            .ToHashSet();
-        var expected = new HashSet<SecurityIdentifier>
-        {
-            WindowsIdentity.GetCurrent().User!,
-            new(WellKnownSidType.LocalSystemSid, null),
-            new(WellKnownSidType.BuiltinAdministratorsSid, null),
-        };
-        Assert.True(sids.SetEquals(expected), "ACL: " + string.Join(", ", sids));
+        var sids = AllowedSids(acl);
+        Assert.Contains(WindowsIdentity.GetCurrent().User!, sids);
+        Assert.Contains(LocalSystem, sids);
+        Assert.Contains(Admins, sids);
+        Assert.DoesNotContain(sids, s => Core.Security.EntropyFileRules.IsBroadPrincipal(s.Value));
 
         var second = Create();
         second.EnsureReady();
         Assert.False(second.CreatedNewKey);
+    }
+
+    [Fact]
+    public void Entropy_file_gets_the_accounts_the_data_folder_grants_so_any_creator_leaves_it_readable()
+    {
+        // The data folder grants the "service account" (NETWORK SERVICE stands in) Modify for files.
+        var folder = new DirectoryInfo(_dir);
+        var folderAcl = folder.GetAccessControl();
+        folderAcl.AddAccessRule(new FileSystemAccessRule(NetworkService, FileSystemRights.Modify,
+            InheritanceFlags.ObjectInherit | InheritanceFlags.ContainerInherit, PropagationFlags.None, AccessControlType.Allow));
+        folder.SetAccessControl(folderAcl);
+
+        Create().EnsureReady();
+
+        var rules = new FileInfo(new YanmtPaths(_dir).EntropyFile).GetAccessControl()
+            .GetAccessRules(true, true, typeof(SecurityIdentifier)).Cast<FileSystemAccessRule>().ToList();
+        var service = Assert.Single(rules, r => r.IdentityReference.Equals(NetworkService));
+        Assert.True(service.FileSystemRights.HasFlag(FileSystemRights.Read), $"service account rights: {service.FileSystemRights}");
+    }
+
+    [Fact]
+    public void Acl_copies_file_inheritable_entries_but_never_broad_groups()
+    {
+        var self = WindowsIdentity.GetCurrent().User!;
+        var folder = new DirectorySecurity();
+        folder.SetAccessRuleProtection(true, false);
+        var both = InheritanceFlags.ObjectInherit | InheritanceFlags.ContainerInherit;
+        folder.AddAccessRule(new FileSystemAccessRule(NetworkService, FileSystemRights.Modify, both, PropagationFlags.None, AccessControlType.Allow));
+        folder.AddAccessRule(new FileSystemAccessRule(Users, FileSystemRights.ReadAndExecute, both, PropagationFlags.None, AccessControlType.Allow));
+        folder.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.LocalServiceSid, null),
+            FileSystemRights.Read, InheritanceFlags.ContainerInherit, PropagationFlags.None, AccessControlType.Allow)); // folders only
+        folder.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.CreatorOwnerSid, null),
+            FileSystemRights.FullControl, both, PropagationFlags.InheritOnly, AccessControlType.Allow));
+
+        var file = SecretProtector.BuildEntropyFileSecurity(folder, self);
+
+        Assert.True(file.AreAccessRulesProtected);
+        var sids = AllowedSids(file);
+        Assert.True(sids.SetEquals([NetworkService, self, LocalSystem, Admins]), "ACL: " + string.Join(", ", sids));
+        Assert.All(file.GetAccessRules(true, true, typeof(SecurityIdentifier)).Cast<FileSystemAccessRule>(),
+            r => Assert.Equal(InheritanceFlags.None, r.InheritanceFlags));
+    }
+
+    [Fact]
+    public void Unreadable_existing_file_names_the_account_and_the_fix()
+    {
+        Create().EnsureReady();
+        var path = new YanmtPaths(_dir).EntropyFile;
+        var self = WindowsIdentity.GetCurrent().User!;
+        var file = new FileInfo(path);
+        var original = file.GetAccessControl();
+        var denied = file.GetAccessControl();
+        denied.AddAccessRule(new FileSystemAccessRule(self, FileSystemRights.ReadData, AccessControlType.Deny));
+        file.SetAccessControl(denied);
+        try
+        {
+            var ex = Assert.Throws<EntropyFileUnreadableException>(() => Create().EnsureReady());
+
+            Assert.Equal(path, ex.Path);
+            Assert.Contains($"icacls \"{path}\" /grant \"{ex.Account}:R\"", ex.Message);
+            Assert.Equal(32, new FileInfo(path).Length); // never replaced
+        }
+        finally
+        {
+            file.SetAccessControl(original);
+        }
     }
 
     [Fact]

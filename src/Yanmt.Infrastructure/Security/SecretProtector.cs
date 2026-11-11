@@ -3,14 +3,17 @@ using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using Microsoft.Extensions.Logging;
+using Yanmt.Core.Security;
 
 namespace Yanmt.Infrastructure.Security;
 
 /// <summary>
 /// Encrypts device credentials with DPAPI in machine scope. Machine scope alone would let any
 /// process on the server decrypt the blobs, so every call also mixes in 32 random bytes from
-/// <c>secrets.entropy</c> in the data folder. That file is created with an ACL limited to the
-/// service account, SYSTEM, and Administrators. Losing it, or moving the DB to another server,
+/// <c>secrets.entropy</c> in the data folder. That file is created with the data folder's inheritable
+/// ACL (which grants the service account) minus broad groups such as Users, plus the creating
+/// account, SYSTEM, and Administrators, with inheritance off. So a file created by an admin's hand
+/// run is still readable by the service. Losing it, or moving the DB to another server,
 /// makes stored credentials unreadable; they must be re-entered or restored from a passphrase export.
 /// </summary>
 public sealed class SecretProtector
@@ -20,12 +23,14 @@ public sealed class SecretProtector
     private static readonly byte[] Purpose = Encoding.ASCII.GetBytes("YANMT device credentials v1");
 
     private readonly string _entropyPath;
+    private readonly string _dataFolder;
     private readonly ILogger<SecretProtector> _logger;
     private readonly Lazy<byte[]> _entropy;
 
     public SecretProtector(YanmtPaths paths, ILogger<SecretProtector> logger)
     {
         _entropyPath = paths.EntropyFile;
+        _dataFolder = paths.Root;
         _logger = logger;
         _entropy = new Lazy<byte[]>(LoadOrCreateEntropy, LazyThreadSafetyMode.ExecutionAndPublication);
     }
@@ -84,17 +89,21 @@ public sealed class SecretProtector
 
     private byte[] LoadOrCreateEntropy()
     {
+        var creating = false;
         try
         {
             if (!File.Exists(_entropyPath))
             {
+                creating = true;
                 if (TryCreateEntropyFile())
                 {
                     CreatedNewKey = true;
                     _logger.LogWarning(
-                        "Created a new credential key file at {Path}. Back it up with the database; credentials saved before it existed can't be decrypted.",
+                        "Created a new credential key file at {Path}. Back it up with the database; credentials and config backups saved before it existed can't be decrypted.",
                         _entropyPath);
                 }
+
+                creating = false;
             }
 
             var bytes = File.ReadAllBytes(_entropyPath);
@@ -107,27 +116,37 @@ public sealed class SecretProtector
 
             return bytes;
         }
+        catch (UnauthorizedAccessException ex) when (creating)
+        {
+            throw new InvalidOperationException(EntropyFileRules.CannotCreateMessage(_entropyPath, _dataFolder, CurrentAccount()), ex);
+        }
         catch (UnauthorizedAccessException ex)
         {
-            throw new InvalidOperationException(
-                $"Cannot read or create {_entropyPath}. The YANMT service account needs read access to it (and Modify on the data folder to create it).", ex);
+            throw new EntropyFileUnreadableException(_entropyPath, CurrentAccount(), ex);
         }
+    }
+
+    internal static string CurrentAccount()
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        return identity.Name;
     }
 
     /// <summary>Creates the file with a protected ACL. Returns false if another process created it first.</summary>
     private bool TryCreateEntropyFile()
     {
-        var security = new FileSecurity();
-        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
-        var self = WindowsIdentity.GetCurrent().User!;
-        foreach (var sid in new[]
-                 {
-                     self,
-                     new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
-                     new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
-                 }.Distinct())
+        using var identity = WindowsIdentity.GetCurrent();
+        FileSecurity security;
+        try
         {
-            security.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.FullControl, AccessControlType.Allow));
+            security = BuildEntropyFileSecurity(new DirectoryInfo(_dataFolder).GetAccessControl(AccessControlSections.Access), identity.User!);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or PrivilegeNotHeldException)
+        {
+            // Can't read the folder's ACL: fall back to the creator, SYSTEM, and Administrators only.
+            _logger.LogWarning(ex, "Cannot read the ACL of {Folder}; {Path} will be readable only by {Account}, SYSTEM and Administrators.",
+                _dataFolder, _entropyPath, identity.Name);
+            security = BuildEntropyFileSecurity(null, identity.User!);
         }
 
         var entropy = RandomNumberGenerator.GetBytes(EntropyLength);
@@ -147,6 +166,65 @@ public sealed class SecretProtector
             CryptographicOperations.ZeroMemory(entropy);
         }
     }
+
+    /// <summary>
+    /// The entropy file's ACL: what the file would inherit from <paramref name="folder"/> (so the service
+    /// account the data folder grants can read it, whoever creates the file), without allow entries for
+    /// broad groups such as Users, plus <paramref name="creator"/>, SYSTEM and Administrators. Inheritance
+    /// is off, so a later change to the folder doesn't widen it; a folder <c>icacls ... /T</c> still applies.
+    /// </summary>
+    public static FileSecurity BuildEntropyFileSecurity(DirectorySecurity? folder, SecurityIdentifier creator)
+    {
+        var security = new FileSecurity();
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        if (folder is not null)
+        {
+            foreach (FileSystemAccessRule rule in folder.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier)))
+            {
+                if (!rule.InheritanceFlags.HasFlag(InheritanceFlags.ObjectInherit))
+                {
+                    continue; // applies to subfolders only, never to files
+                }
+
+                var sid = (SecurityIdentifier)rule.IdentityReference;
+                if (sid.Value == EntropyFileRules.CreatorOwnerSid)
+                {
+                    sid = creator;
+                }
+
+                if (rule.AccessControlType == AccessControlType.Allow && EntropyFileRules.IsBroadPrincipal(sid.Value))
+                {
+                    continue;
+                }
+
+                var rights = (FileSystemRights)EntropyFileRules.MapGenericFileRights((int)rule.FileSystemRights);
+                security.AddAccessRule(new FileSystemAccessRule(sid, rights, rule.AccessControlType));
+            }
+        }
+
+        foreach (var sid in new[]
+                 {
+                     creator,
+                     new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
+                     new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
+                 })
+        {
+            security.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.FullControl, AccessControlType.Allow));
+        }
+
+        return security;
+    }
+}
+
+/// <summary>
+/// secrets.entropy exists but this account can't read it. The message names the account and the
+/// icacls fix; startup adds whether credentials are saved (and so whether deleting it is safe).
+/// </summary>
+public sealed class EntropyFileUnreadableException(string path, string account, Exception inner)
+    : InvalidOperationException(EntropyFileRules.UnreadableMessage(path, account, usage: null), inner)
+{
+    public string Path { get; } = path;
+    public string Account { get; } = account;
 }
 
 public sealed class SecretUnreadableException(string message, Exception? inner = null) : Exception(message, inner);
