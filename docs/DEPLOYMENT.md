@@ -206,10 +206,9 @@ Domain groups:
 
 ### 2.6 Register and start the service
 
-> **Don't run `yanmt.exe` by hand as an administrator before the service has started once.** The first run
-> creates `$data\secrets.entropy` with an ACL that only the account running it (plus SYSTEM and
-> Administrators) can read. If that is your admin account, the service then fails with
-> "Cannot read or create ...secrets.entropy". See section 6 for the fix.
+> The first run creates `$data\secrets.entropy`. It gets the data folder's permissions (so the service
+> account from section 2.3 can read it, whoever ran YANMT first), without Users or other broad groups, plus
+> SYSTEM and Administrators. Set the data folder permissions **before** the first run, by hand or as a service.
 
 **Local account:** build the credential from the full `COMPUTERNAME\name` (the Server 2025 credential
 dialog rejects `.\svc-yanmt` in `Get-Credential`):
@@ -439,17 +438,30 @@ Other notes for a new server:
 
 ### The service won't start
 
-Windows only reports a generic error: 1053 ("did not respond to the start or control request in a timely
-fashion") or event 7009 (timeout). The real reason is in YANMT's own logs. Read **both**:
+Windows only reports a generic error. The real reason is in YANMT's own logs:
 
-- `$data\logs\startup-failure.log`: failures before logging is up (for example a missing or unreadable
-  certificate).
-- `$data\logs\yanmt-YYYYMMDD.log` (today's date): everything after logging is up.
+- `$data\logs\startup-failure.log`: **every** fatal startup error, with the startup timings.
+- `$data\logs\startup.log`: one block per start, written as each phase ends (runtime start, configuration,
+  certificate, host build, migrations, credential key, web server listening). It shows how far a start got
+  and where the time went.
+- `$data\logs\yanmt-YYYYMMDD.log` (today's date): everything once logging is up, including a CRIT line for a
+  failed start and a "YANMT started" line with the timings.
 
 ```powershell
 Get-Content "$data\logs\startup-failure.log" -Tail 30 -ErrorAction SilentlyContinue
+Get-Content "$data\logs\startup.log" -Tail 20 -ErrorAction SilentlyContinue
 Get-Content "$data\logs\yanmt-$(Get-Date -Format yyyyMMdd).log" -Tail 50
 ```
+
+What Windows reports:
+
+- **Event 7034, "terminated unexpectedly"** (exit code 1): YANMT reached the service manager, then failed.
+  Migrations, the starter library and the credential key run after the service is reported running, so
+  they never hit the 30 s start timeout. Read `startup-failure.log`.
+- **Error 1053 / event 7009 (timeout)**: the process didn't reach the service manager within 30 s, or failed
+  before it did (configuration, data folder, certificate). The last line of `startup.log` shows how far it
+  got. The first start as a new account can be slow because Windows creates the account's profile then; if
+  `startup.log` shows a slow start and no error, start the service again.
 
 | Message | Cause and fix |
 | --- | --- |
@@ -475,10 +487,12 @@ Run from any other folder, the exe reads the `appsettings.json` there (or none) 
 A hand run uses **your** (admin) rights, not the service account's. Permission problems (private key, data
 folder, `secrets.entropy`) won't show up; when a hand run works and the service doesn't, suspect permissions.
 
-### "Cannot read or create secrets.entropy"
+### "Cannot read ...secrets.entropy" / "Cannot create ...secrets.entropy"
 
-Usually caused by running `yanmt.exe` by hand as an admin before the service's first start (section 2.6):
-the file was created with an ACL only that admin can read.
+The message names the account the service runs as and the exact `icacls` command to fix it. "Cannot read"
+means the file exists but that account has no read access (it was created by an older YANMT version run by
+hand as an admin, or restored or migrated with its old permissions). It also says whether credentials are
+saved, and so whether deleting the file is safe:
 
 - **No device credentials saved yet** (fresh install): delete the file and start the service; it recreates
   it with the right ACL.
@@ -489,5 +503,11 @@ the file was created with an ACL only that admin can read.
   ```
 
 - **Credentials already saved:** do **not** delete it. Without this file the stored credentials can't be
-  decrypted and must be re-entered. Instead, re-run the data folder `icacls` from section 2.3 (with `/T`) so
-  the service account gets access to the existing file, then start the service.
+  decrypted and must be re-entered. Grant the service account read on it (the error message has this
+  command with the real path and account), then start the service:
+
+  ```powershell
+  icacls "$data\secrets.entropy" /grant "${account}:R"
+  icacls "$data\secrets.entropy"     # the service account must be listed with (R)
+  Start-Service YANMT
+  ```
