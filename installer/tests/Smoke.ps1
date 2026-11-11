@@ -176,7 +176,12 @@ try {
     $credential = [System.Management.Automation.PSCredential]::new($account, $password)
     New-Service -Name YANMT -DisplayName 'YANMT network monitor' -BinaryPathName "`"$app\yanmt.exe`"" `
         -StartupType Automatic -Credential $credential | Out-Null
-    try { Start-Service YANMT } catch { Show-Logs; throw }
+    sc.exe start YANMT | Out-String | Write-Host   # prints the Win32 error code when it fails
+    if (-not (Wait-Until { (Get-Service YANMT).Status -eq 'Running' } 60)) {
+        sc.exe query YANMT | Out-String | Write-Host
+        Show-Logs
+        throw 'The manual install (svc-yanmt) did not start.'
+    }
     $ready = Wait-Until { (Test-Path "$data\secrets.entropy") -and (Test-Path "$data\yanmt.db") } 120
     if (-not $ready) { Show-Logs; throw 'The manual install did not create secrets.entropy and yanmt.db.' }
     Check ((Get-Service-Info).StartName -eq $account) 'manual install runs as svc-yanmt'
