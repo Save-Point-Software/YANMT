@@ -168,9 +168,12 @@ try {
     $settings | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $app 'appsettings.json') -Encoding utf8
     Set-Marker '41'
 
-    # ACLs last, as in DEPLOYMENT.md: the runner can't write appsettings.json after the /T grant.
-    icacls $data /inheritance:r /grant "${account}:(OI)(CI)M" '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' /T | Select-Object -Last 1
-    icacls $app /inheritance:r /grant "${account}:(OI)(CI)RX" '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' /T | Select-Object -Last 1
+    # Folder ACL, then existing files back to inheriting it. Not DEPLOYMENT.md's "/inheritance:r /grant (OI)(CI)... /T":
+    # on files that strips the inherited ACEs and the (OI)(CI) grants don't apply, leaving an empty DACL
+    # (yanmt.exe then fails to start with error 5).
+    icacls $data /inheritance:r /grant "${account}:(OI)(CI)M" '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' | Select-Object -Last 1
+    icacls $app /inheritance:r /grant "${account}:(OI)(CI)RX" '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' | Select-Object -Last 1
+    icacls "$app\*" /reset /T /Q | Select-Object -Last 1
     Grant-KeyRead $cert $userSid
 
     $credential = [System.Management.Automation.PSCredential]::new($account, $password)
