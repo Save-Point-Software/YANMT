@@ -98,7 +98,9 @@ public sealed class RoleGroupMap
     private static HashSet<SecurityIdentifier> ResolveAll(IEnumerable<string> names, string role, List<string> problems, ILogger? logger)
     {
         var sids = new HashSet<SecurityIdentifier>();
-        foreach (var configured in names)
+
+        // Installer settings repeat the last group to cover a longer list in appsettings.json.
+        foreach (var configured in names.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var sid = TryResolve(configured, out var error);
             if (sid is null)
