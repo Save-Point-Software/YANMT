@@ -198,7 +198,7 @@ try {
     $code = Invoke-Msi 'bad-thumbprint.log' @('/i', $Msi1, 'CERT_THUMBPRINT=0000000000000000000000000000000000000000', 'ADMIN_GROUPS=.\YANMT-Admins')
     Check ($code -eq 1603) "bad thumbprint: msiexec fails (got $code)"
     Check ((Get-Service-Info).StartName -eq $account) 'bad thumbprint: the manual service is untouched'
-    Check ((Get-Products).Count -eq 0) 'bad thumbprint: nothing installed'
+    Check (@(Get-Products).Count -eq 0) 'bad thumbprint: nothing installed'
     Check ((Select-String -Path (Join-Path $LogDir 'bad-thumbprint.log') -Pattern 'No certificate with thumbprint' -Quiet)) 'bad thumbprint: the log says why'
 
     # --------------------------------------------------------------------------------------------
@@ -248,7 +248,7 @@ try {
     Check (Wait-Until { (Get-Service YANMT).Status -eq 'Running' } 60) 'upgrade: service is running'
     Check (Wait-Until { (Get-HttpStatus) -eq '401' } 60) 'upgrade: HTTPS answers 401'
     Check ((Get-Marker) -eq 42) 'upgrade: hand-edited appsettings.json kept'
-    $products = Get-Products
+    $products = @(Get-Products)
     Check ($products.Count -eq 1 -and $products[0].DisplayVersion -eq '0.0.2') "upgrade: only v2 is installed ($($products.DisplayVersion -join ', '))"
     $reg = Get-Settings
     Check ($reg.CertificateThumbprint -eq $thumb -and $reg.AdminGroups -eq '.\YANMT-Admins' -and $reg.FirewallRemoteAddress -eq $remote) 'upgrade: settings read back from the registry'
@@ -260,7 +260,7 @@ try {
     Step '5. Downgrade to v1 is refused'
     $code = Invoke-Msi 'downgrade-v1.log' @('/i', $Msi1)
     Check ($code -ne 0) "downgrade: refused (exit code $code)"
-    Check ((Get-Products)[0].DisplayVersion -eq '0.0.2') 'downgrade: v2 still installed'
+    Check (@(Get-Products)[0].DisplayVersion -eq '0.0.2') 'downgrade: v2 still installed'
     Check ((Get-Service YANMT).Status -eq 'Running') 'downgrade: service still running'
 
     # --------------------------------------------------------------------------------------------
@@ -273,7 +273,7 @@ try {
     Check (-not [System.Diagnostics.EventLog]::SourceExists('YANMT')) 'uninstall: event source removed'
     Check (-not (Test-Path $app)) "uninstall: install folder removed ($(@(Get-ChildItem $app -Recurse -ErrorAction SilentlyContinue).FullName -join ', '))"
     Check ((Test-Path "$data\yanmt.db") -and (Test-Path "$data\secrets.entropy") -and (Test-Path "$data\backups\pre-upgrade")) 'uninstall: data folder kept'
-    Check ((Get-Products).Count -eq 0) 'uninstall: no YANMT product left'
+    Check (@(Get-Products).Count -eq 0) 'uninstall: no YANMT product left'
 }
 catch {
     Write-Host "ERROR  $_" -ForegroundColor Red
