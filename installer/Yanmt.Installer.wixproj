@@ -13,12 +13,12 @@
   <PropertyGroup>
     <ProductVersion Condition=" '$(ProductVersion)' == '' ">0.0.1</ProductVersion>
     <YanmtPublishDir Condition=" '$(YanmtPublishDir)' == '' ">$(MSBuildThisFileDirectory)..\publish</YanmtPublishDir>
-    <YanmtPublishDir>$([System.IO.Path]::GetFullPath('$(YanmtPublishDir)'))</YanmtPublishDir>
-    <YanmtPublishDir>$([MSBuild]::EnsureTrailingSlash('$(YanmtPublishDir)'))</YanmtPublishDir>
+    <!-- A -p: value is a global property and can't be reassigned here, so normalize into another one. -->
+    <YanmtPublishPath>$([MSBuild]::EnsureTrailingSlash($([System.IO.Path]::GetFullPath('$(YanmtPublishDir)'))))</YanmtPublishPath>
     <OutputName>yanmt-$(ProductVersion)</OutputName>
     <Platform>x64</Platform>
     <InstallerPlatform>x64</InstallerPlatform>
-    <DefineConstants>ProductVersion=$(ProductVersion);PublishDir=$(YanmtPublishDir)</DefineConstants>
+    <DefineConstants>ProductVersion=$(ProductVersion);PublishDir=$(YanmtPublishPath)</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
@@ -37,8 +37,8 @@
            Text="ProductVersion '$(ProductVersion)' must be X.Y.Z." />
     <Error Condition=" $([System.Version]::Parse('$(ProductVersion)').Major) &gt; 255 or $([System.Version]::Parse('$(ProductVersion)').Minor) &gt; 255 or $([System.Version]::Parse('$(ProductVersion)').Build) &gt; 65535 "
            Text="ProductVersion '$(ProductVersion)' is outside the MSI limits (X and Y at most 255, Z at most 65535)." />
-    <Error Condition=" !Exists('$(YanmtPublishDir)yanmt.exe') "
-           Text="No yanmt.exe in $(YanmtPublishDir). Run dotnet publish src/Yanmt.Web -c Release -r win-x64 -o publish first." />
+    <Error Condition=" !Exists('$(YanmtPublishPath)yanmt.exe') "
+           Text="No yanmt.exe in $(YanmtPublishPath). Run dotnet publish src/Yanmt.Web -c Release -r win-x64 -o publish first." />
   </Target>
 
 </Project>
