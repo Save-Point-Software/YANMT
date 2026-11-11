@@ -6,7 +6,7 @@ User-facing install docs are in `docs/DEPLOYMENT.md`.
 ```powershell
 dotnet publish src/Yanmt.Web -c Release -r win-x64 -p:Version=1.2.3 -o publish
 dotnet build installer/Yanmt.Installer.wixproj -c Release -p:ProductVersion=1.2.3 -p:YanmtPublishDir=$PWD\publish
-# -> installer\bin\x64\Release\yanmt-1.2.3.msi
+# -> installer\bin\x64\Release\yanmt-1.2.3.msi   (use -t:Rebuild when only the version changed)
 ```
 
 | File | What it does |

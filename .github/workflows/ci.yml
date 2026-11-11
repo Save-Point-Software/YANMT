@@ -53,11 +53,12 @@ jobs:
       - name: Publish (self-contained single file)
         run: dotnet publish src/Yanmt.Web -c Release -r win-x64 -p:Version=0.0.1 -o publish
 
-      # Two versions of the same build, for the upgrade and downgrade checks.
+      # Two versions of the same build, for the upgrade and downgrade checks. Rebuild: WiX's
+      # incremental check ignores a changed ProductVersion.
       - name: Build MSI
         run: |
           dotnet build installer/Yanmt.Installer.wixproj -c Release -p:ProductVersion=0.0.1 -p:YanmtPublishDir=${{ github.workspace }}/publish
-          dotnet build installer/Yanmt.Installer.wixproj -c Release -p:ProductVersion=0.0.2 -p:YanmtPublishDir=${{ github.workspace }}/publish
+          dotnet build installer/Yanmt.Installer.wixproj -t:Rebuild -c Release -p:ProductVersion=0.0.2 -p:YanmtPublishDir=${{ github.workspace }}/publish
 
       - name: Upload MSI
         uses: actions/upload-artifact@v4
