@@ -47,9 +47,9 @@ else
             <tbody>
                 @foreach (var m in _maps)
                 {
-                    var state = MapService.SubmapState(_contents, m.Id, Status.StateOf);
+                    var color = MapService.SubmapState(_contents, m.Id, Status.ColorOf);
                     <tr @key="m.Id">
-                        <td class="col-state"><StateDot State="state" Colors="_colors" /></td>
+                        <td class="col-state"><NodeDot Color="color" Colors="_colors" /></td>
                         <td>
                             <a href="maps/@m.Id">@m.Name</a>
                             @if (m.Id == _homeId)

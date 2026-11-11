@@ -1,0 +1,7 @@
+<span class="state-dot" style="background:@Colors.For(Color)" title="@Color.Label()" aria-label="@Color.Label()"></span>
+
+@code {
+    /// <summary>A node's or submap's color: Down / No SNMP / Needs attention / Normal / No data.</summary>
+    [Parameter, EditorRequired] public NodeColor Color { get; set; }
+    [Parameter] public StatusColors Colors { get; set; } = StatusColors.Default;
+}

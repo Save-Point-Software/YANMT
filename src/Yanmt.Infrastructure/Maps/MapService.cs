@@ -117,8 +117,8 @@ public sealed class MapService(IDbContextFactory<YanmtDbContext> dbFactory, Yanm
             byMap[id].Where(e => e.Kind == MapElementKind.Submap).Select(e => e.TargetMapId!.Value).ToList()));
     }
 
-    /// <summary>Rolled-up state of a submap from the current node states.</summary>
-    public static Severity SubmapState(IReadOnlyDictionary<int, MapContents> contents, int mapId, Func<int, Severity> nodeState) =>
+    /// <summary>Rolled-up color of a submap from the current node colors.</summary>
+    public static NodeColor SubmapState(IReadOnlyDictionary<int, MapContents> contents, int mapId, Func<int, NodeColor> nodeState) =>
         new MapRollup(contents, nodeState).StateOf(mapId);
 
     public async Task<MapResult> CreateAsync(string name, int? parentMapId, CancellationToken cancellationToken = default)

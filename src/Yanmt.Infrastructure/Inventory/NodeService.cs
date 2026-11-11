@@ -24,13 +24,11 @@ public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, Tim
             .OrderBy(n => n.Hostname)
             .ToListAsync(cancellationToken);
 
-        var states = await db.StatusSources.AsNoTracking()
+        var sources = (await db.StatusSources.AsNoTracking()
             .Where(s => s.Enabled)
-            .Select(s => new { s.NodeId, s.State })
-            .ToListAsync(cancellationToken);
-        var stateByNode = states
-            .GroupBy(s => s.NodeId)
-            .ToDictionary(g => g.Key, g => StatusRollup.Worst(g.Select(s => s.State)));
+            .Select(s => new { s.NodeId, s.SourceType, s.State, s.SinceUtc, s.LastUpdateUtc })
+            .ToListAsync(cancellationToken))
+            .ToLookup(s => s.NodeId, s => (s.SourceType, s.State, s.SinceUtc, s.LastUpdateUtc));
 
         return nodes.Select(n => new NodeListItem(
                 n.Id,
@@ -43,7 +41,8 @@ public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, Tim
                 n.IcmpEnabled,
                 n.SnmpEnabled,
                 n.SshEnabled,
-                n.Enabled ? stateByNode.GetValueOrDefault(n.Id, Severity.Unknown) : Severity.Unknown))
+                State(n, sources[n.Id]),
+                Color(n, sources[n.Id])))
             .ToList();
     }
 
@@ -59,10 +58,22 @@ public sealed class NodeService(IDbContextFactory<YanmtDbContext> dbFactory, Tim
             return null;
         }
 
-        var states = await db.StatusSources.AsNoTracking().Where(s => s.NodeId == id && s.Enabled).Select(s => s.State).ToListAsync(cancellationToken);
+        var sources = (await db.StatusSources.AsNoTracking()
+                .Where(s => s.NodeId == id && s.Enabled)
+                .Select(s => new { s.SourceType, s.State, s.SinceUtc, s.LastUpdateUtc })
+                .ToListAsync(cancellationToken))
+            .Select(s => (s.SourceType, s.State, s.SinceUtc, s.LastUpdateUtc))
+            .ToList();
         return new NodeListItem(n.Id, n.Hostname, n.ManagementIp, n.Site, TagNames(n), n.Icon, n.Enabled, n.IcmpEnabled, n.SnmpEnabled,
-            n.SshEnabled, n.Enabled ? StatusRollup.Worst(states) : Severity.Unknown);
+            n.SshEnabled, State(n, sources), Color(n, sources));
     }
+
+    // Same rules as StatusCache, so the DB fallback and the live cache can't drift.
+    private static Severity State(Node n, IEnumerable<(StatusSourceType Type, Severity State, DateTime SinceUtc, DateTime? LastUpdateUtc)> sources) =>
+        n.Enabled ? StatusRollup.Worst(sources.Select(s => s.State)) : Severity.Unknown;
+
+    private static NodeColor Color(Node n, IEnumerable<(StatusSourceType Type, Severity State, DateTime SinceUtc, DateTime? LastUpdateUtc)> sources) =>
+        NodeColors.Evaluate(n.Enabled, n.IcmpEnabled, n.SnmpEnabled && n.SnmpProfileId != null, sources);
 
     public async Task<List<NodeEventItem>> RecentEventsAsync(int nodeId, int count, CancellationToken cancellationToken = default)
     {

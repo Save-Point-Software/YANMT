@@ -67,12 +67,15 @@ public class MapServiceTests
 
         var contents = await svc.RollupContentsAsync(Ct);
         Assert.Equal([spoke], contents[closet].NodeIds); // the disabled node doesn't count
-        var states = new Dictionary<int, Severity> { [hub] = Severity.Normal, [spoke] = Severity.Critical, [off] = Severity.Unknown };
-        Assert.Equal(Severity.Critical, MapService.SubmapState(contents, site, id => states[id]));
-        Assert.Equal(Severity.Critical, MapService.SubmapState(contents, home, id => states[id]));
+        var states = new Dictionary<int, NodeColor> { [hub] = NodeColor.Normal, [spoke] = NodeColor.Down, [off] = NodeColor.NoData };
+        Assert.Equal(NodeColor.Down, MapService.SubmapState(contents, site, id => states[id]));
+        Assert.Equal(NodeColor.Down, MapService.SubmapState(contents, home, id => states[id]));
 
-        states[spoke] = Severity.Normal;
-        Assert.Equal(Severity.Normal, MapService.SubmapState(contents, site, id => states[id]));
+        states[spoke] = NodeColor.NoSnmp;
+        Assert.Equal(NodeColor.NoSnmp, MapService.SubmapState(contents, home, id => states[id]));
+
+        states[spoke] = NodeColor.Normal;
+        Assert.Equal(NodeColor.Normal, MapService.SubmapState(contents, site, id => states[id]));
     }
 
     [Fact]
@@ -89,7 +92,7 @@ public class MapServiceTests
         Assert.False((await svc.AddSubmapAsync(a, b, 20, 20, Ct)).Ok); // already there
 
         var contents = await svc.RollupContentsAsync(Ct);
-        Assert.Equal(Severity.Unknown, MapService.SubmapState(contents, a, _ => Severity.Normal)); // nothing reporting
+        Assert.Equal(NodeColor.NoData, MapService.SubmapState(contents, a, _ => NodeColor.Normal)); // nothing inside
     }
 
     [Fact]

@@ -86,8 +86,10 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<StatusBroadcaster>(),
             sp.GetRequiredService<INotifier>(),
             sp.GetRequiredService<TimeProvider>(),
-            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<StatusEngine>>()));
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<StatusEngine>>(),
+            sp.GetRequiredService<SnmpRecheckRequests>()));
         services.AddHostedService<StatusEngineService>();
+        services.AddSingleton<SnmpRecheckRequests>();
         services.AddSingleton<DefaultStatsCollector>();
         services.AddSingleton<IcmpPoller>();
         services.AddHostedService(sp => sp.GetRequiredService<IcmpPoller>());

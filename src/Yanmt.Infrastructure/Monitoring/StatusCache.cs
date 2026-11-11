@@ -25,8 +25,12 @@ public sealed record SourceStatus(
     public Severity? ShownPending => PendingText is null ? null : PendingState;
 }
 
-/// <summary>A node's rolled-up state: worst of its enabled sources; Unknown if the node is disabled or has none.</summary>
-public sealed record NodeStatus(int NodeId, bool Enabled, Severity State, IReadOnlyList<SourceStatus> Sources)
+/// <summary>
+/// A node's live status. <see cref="State"/> is the worst severity of its enabled sources (Unknown
+/// if the node is disabled or has none). <see cref="Color"/> is what the map and lists show: the
+/// kind of problem, from <see cref="NodeColorRollup"/>.
+/// </summary>
+public sealed record NodeStatus(int NodeId, bool Enabled, Severity State, IReadOnlyList<SourceStatus> Sources, NodeColor Color = NodeColor.NoData)
 {
     public SourceStatus? Source(StatusSourceType type, string key = "") =>
         Sources.FirstOrDefault(s => s.Type == type && s.Key == key);
@@ -44,6 +48,8 @@ public sealed class StatusCache
 
     public Severity StateOf(int nodeId) => _nodes.TryGetValue(nodeId, out var n) ? n.State : Severity.Unknown;
 
+    public NodeColor ColorOf(int nodeId) => _nodes.TryGetValue(nodeId, out var n) ? n.Color : NodeColor.NoData;
+
     /// <summary>Reloads these nodes (all nodes when null) from the DB. Returns the nodes whose entry changed.</summary>
     internal async Task<List<int>> RefreshAsync(YanmtDbContext db, IReadOnlyCollection<int>? nodeIds, CancellationToken cancellationToken)
     {
@@ -55,7 +61,9 @@ public sealed class StatusCache
             sourceQuery = sourceQuery.Where(s => nodeIds.Contains(s.NodeId));
         }
 
-        var nodes = await nodeQuery.Select(n => new { n.Id, n.Enabled }).ToListAsync(cancellationToken);
+        var nodes = await nodeQuery
+            .Select(n => new { n.Id, n.Enabled, n.IcmpEnabled, Snmp = n.SnmpEnabled && n.SnmpProfileId != null })
+            .ToListAsync(cancellationToken);
         var sources = (await sourceQuery.ToListAsync(cancellationToken)).ToLookup(s => s.NodeId);
 
         // Custom sources are keyed by instance id; their dampening comes from the definition.
@@ -80,7 +88,9 @@ public sealed class StatusCache
                     : new SourceStatus(s.SourceType, s.SourceKey, s.State, s.Value, s.ValueText, s.SinceUtc, s.DisplayName))
                 .ToList();
             var state = node.Enabled ? StatusRollup.Worst(list.Select(s => s.State)) : Severity.Unknown;
-            var status = new NodeStatus(node.Id, node.Enabled, state, list);
+            var color = NodeColors.Evaluate(node.Enabled, node.IcmpEnabled, node.Snmp,
+                sources[node.Id].Select(s => (s.SourceType, s.State, s.SinceUtc, s.LastUpdateUtc)));
+            var status = new NodeStatus(node.Id, node.Enabled, state, list, color);
             if (!_nodes.TryGetValue(node.Id, out var old) || !Same(old, status))
             {
                 _nodes[node.Id] = status;
@@ -102,5 +112,5 @@ public sealed class StatusCache
     }
 
     private static bool Same(NodeStatus a, NodeStatus b) =>
-        a.Enabled == b.Enabled && a.State == b.State && a.Sources.SequenceEqual(b.Sources);
+        a.Enabled == b.Enabled && a.State == b.State && a.Color == b.Color && a.Sources.SequenceEqual(b.Sources);
 }

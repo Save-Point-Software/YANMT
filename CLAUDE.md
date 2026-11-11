@@ -78,8 +78,11 @@ everything else comes from user-defined custom monitors (the starter library shi
   (`Core/Monitors`). Starter monitors live in `StarterLibrary`; it is versioned, so add new ones
   with a version bump and an `AddedIn` entry (a starter is only added by the seed that crosses its
   version). Changes to existing starters go in a guarded upgrade step that skips anything the user edited.
-- Status severity is one scale everywhere: Normal, Warning, Critical, Unknown. Rollup rank:
-  Critical > Warning > Unknown > Normal.
+- Source severity is one scale everywhere: Normal, Warning, Critical, Unknown (`StatusRollup` rank:
+  Critical > Warning > Unknown > Normal). Sources, events and links use it. Node and submap colors are
+  a separate `NodeColor` (Core `NodeColorRollup`, rules in `docs/SPEC.md` *Status model*), ranked
+  Down (red) > NoSnmp (orange) > Attention (yellow) > Normal (green) > NoData (gray). When ICMP goes
+  Critical, `StatusEngine` asks `SnmpRecheckRequests` for an out-of-cycle SNMP poll.
 
 ## Conventions
 - Audited entities implement `IAudited` and must be saved with `SaveChangesAsync`.

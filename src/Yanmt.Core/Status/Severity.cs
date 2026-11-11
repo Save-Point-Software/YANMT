@@ -17,9 +17,10 @@ public enum Severity
 public static class SeverityExtensions
 {
     /// <summary>
-    /// Rank used for "worst state wins" rollups: Critical &gt; Warning &gt; Unknown &gt; Normal.
-    /// Unknown outranks Normal so a node whose SNMP polling is failing never shows green,
-    /// but a real Warning/Critical from another source still wins over missing data.
+    /// Source severity rank for "worst state wins" (<see cref="StatusRollup"/>):
+    /// Critical &gt; Warning &gt; Unknown &gt; Normal. Unknown outranks Normal so missing data never
+    /// reads as fine, but a real Warning/Critical still wins over it. Node and submap colors use
+    /// <see cref="NodeColorRollup"/> and <see cref="NodeColorExtensions.Rank"/> instead.
     /// </summary>
     public static int Rank(this Severity severity) => severity switch
     {

@@ -51,7 +51,7 @@
 
 @code {
     [Parameter, EditorRequired] public MapElementView Element { get; set; } = null!;
-    [Parameter] public Severity State { get; set; }
+    [Parameter] public NodeColor State { get; set; }
     [Parameter] public string Color { get; set; } = "";
     [Parameter] public string? Value { get; set; }
     [Parameter] public bool Selected { get; set; }
@@ -63,8 +63,8 @@
         "map-el" + (Element.Kind == MapElementKind.Node && !Element.NodeEnabled ? " map-el-disabled" : "");
 
     private string Tooltip => Element.Kind == MapElementKind.Submap
-        ? $"Submap {Element.Title}: {State}"
-        : $"{Element.Hostname} ({Element.ManagementIp}): {(Element.NodeEnabled ? State.ToString() : "disabled")}"
+        ? $"Submap {Element.Title}: {State.Label()}"
+        : $"{Element.Hostname} ({Element.ManagementIp}): {(Element.NodeEnabled ? State.Label() : "disabled")}"
           + (string.IsNullOrEmpty(Value) ? "" : $", {Value}");
 
     protected override bool ShouldRender()
