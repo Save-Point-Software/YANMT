@@ -53,14 +53,15 @@ jobs:
       - name: Publish (self-contained single file)
         run: dotnet publish src/Yanmt.Web -c Release -r win-x64 -p:Version=0.0.1 -o publish
 
-      # Two versions of the same build, for the upgrade and downgrade checks. Each is copied out
+      # Two versions of the same build, for the upgrade and downgrade checks. The second is the highest
+      # build number a release tag allows (vX.Y.65535), so CI covers that boundary. Each is copied out
       # right away: the second is a Rebuild (WiX's incremental check ignores a changed
       # ProductVersion), and its clean step deletes the first.
       - name: Build MSI
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force msi | Out-Null
-          foreach ($v in '0.0.1', '0.0.2') {
+          foreach ($v in '0.0.1', '0.0.65535') {
             dotnet build installer/Yanmt.Installer.wixproj -t:Rebuild -c Release -p:ProductVersion=$v -p:YanmtPublishDir=${{ github.workspace }}/publish
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             Copy-Item "installer/bin/x64/Release/yanmt-$v.msi" msi/
@@ -77,7 +78,7 @@ jobs:
         run: >
           ./installer/tests/Smoke.ps1
           -Msi1 msi/yanmt-0.0.1.msi
-          -Msi2 msi/yanmt-0.0.2.msi
+          -Msi2 msi/yanmt-0.0.65535.msi
           -PublishDir publish
           -LogDir smoke-logs
 

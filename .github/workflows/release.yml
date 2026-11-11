@@ -1,0 +1,103 @@
+name: Release
+
+# Issue #40. The owner creates and publishes a GitHub Release with a tag vX.Y.Z; this workflow
+# builds that tag and attaches yanmt-X.Y.Z.msi and SHA256SUMS.txt to it. It creates no releases or
+# tags itself. A failed run can be re-run from the Actions tab; --clobber replaces both files together.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write   # gh release upload; this job only
+
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  msi:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+    steps:
+      # The release event checks out the release tag.
+      - uses: actions/checkout@v4
+
+      - name: Version from tag
+        id: version
+        shell: pwsh
+        run: |
+          # MSI ProductVersion limits: X and Y at most 255, Z at most 65535 (the wixproj checks again).
+          if ($env:TAG -notmatch '^v(\d{1,3})\.(\d{1,3})\.(\d{1,5})$' -or
+              [int]$Matches[1] -gt 255 -or [int]$Matches[2] -gt 255 -or [int]$Matches[3] -gt 65535) {
+            throw "Release tag '$env:TAG' must be vX.Y.Z (X, Y at most 255; Z at most 65535)."
+          }
+          $v = "$([int]$Matches[1]).$([int]$Matches[2]).$([int]$Matches[3])"
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Building YANMT $v from $env:TAG ($env:GITHUB_SHA)"
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      # Same build and tests as CI, so a release never ships a commit that fails them.
+      - name: Build and test
+        shell: pwsh
+        run: |
+          dotnet restore
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build --no-restore -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet test --no-build -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Publish (self-contained single file)
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # AssemblyVersion parts must be at most 65534 (CS7034), but an MSI build number may be 65535, so
+          # it is X.Y.0.0. Nothing in YANMT reads the assembly version. FileVersion would follow
+          # AssemblyVersion, so it is set to X.Y.Z.0 explicitly; ProductVersion comes from Version.
+          $assembly = ($env:VERSION -split '\.')[0..1] -join '.'
+          dotnet publish src/Yanmt.Web -c Release -r win-x64 -p:Version=$env:VERSION -p:AssemblyVersion="$assembly.0.0" -p:FileVersion="$env:VERSION.0" -o publish
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $exe = (Get-Item publish/yanmt.exe).VersionInfo
+          if ($exe.FileVersion -ne "$env:VERSION.0") { throw "yanmt.exe has file version $($exe.FileVersion), expected $env:VERSION.0." }
+
+      - name: Build MSI
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          dotnet build installer/Yanmt.Installer.wixproj -t:Rebuild -c Release -p:ProductVersion=$env:VERSION -p:YanmtPublishDir=${{ github.workspace }}/publish
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item "installer/bin/x64/Release/yanmt-$env:VERSION.msi" release/
+
+      # sha256sum format (lowercase hash, two spaces, file name), so `sha256sum -c` and
+      # PowerShell's Get-FileHash can both check it.
+      - name: Checksums
+        shell: pwsh
+        run: |
+          $lines = Get-ChildItem release/*.msi | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"
+          }
+          [IO.File]::WriteAllText("$PWD/release/SHA256SUMS.txt", (($lines -join "`n") + "`n"))
+          Get-Content release/SHA256SUMS.txt
+
+      - name: Upload to the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release upload $env:TAG "release/yanmt-$env:VERSION.msi" release/SHA256SUMS.txt --clobber --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Keep the files as a workflow artifact too
+        uses: actions/upload-artifact@v4
+        with:
+          name: yanmt-${{ steps.version.outputs.version }}
+          path: release/*
