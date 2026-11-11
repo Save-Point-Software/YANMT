@@ -21,9 +21,21 @@
                 @foreach (var s in Live.Sources)
                 {
                     <tr>
-                        <td class="col-state"><StateDot State="s.State" Colors="Colors" /></td>
+                        <td class="col-state nowrap">
+                            <StateDot State="s.State" Colors="Colors" />
+                            @if (s.ShownPending is { } pending)
+                            {
+                                <StateDot State="pending" Colors="Colors" Pending="true" />
+                            }
+                        </td>
                         <td>@SourceLabel(s)</td>
-                        <td class="mono">@s.ValueText</td>
+                        <td>
+                            <span class="mono">@s.ValueText</span>
+                            @if (s.PendingText is { } pendingText)
+                            {
+                                <span class="muted pending-text">@(string.IsNullOrEmpty(s.ValueText) ? null : "— ")@pendingText</span>
+                            }
+                        </td>
                         <td>
                             @if (_trends.TryGetValue((s.Type, s.Key), out var trend))
                             {

@@ -85,9 +85,14 @@
                                               style="@(link.BoundInstanceId is null ? null : $"stroke:{_colors.For(bound?.State ?? Severity.Unknown)}")">
                                             @if (link.BoundInstanceId is not null)
                                             {
-                                                <title>@(bound?.DisplayName ?? "Bound monitor (not polled yet)"): @(bound?.State ?? Severity.Unknown) @bound?.ValueText</title>
+                                                <title>@BoundTitle(bound)</title>
                                             }
                                         </line>
+                                        @if (bound?.ShownPending is { } pending)
+                                        {
+                                            <circle class="map-link-pending" cx="@F((a.X + b.X) / 2)" cy="@F((a.Y + b.Y) / 2)" r="5"
+                                                    style="stroke:@_colors.For(pending)"><title>@BoundTitle(bound)</title></circle>
+                                        }
                                         @if (!string.IsNullOrEmpty(linkText))
                                         {
                                             <g>
@@ -632,6 +637,10 @@
         link is { BoundNodeId: { } node, BoundInstanceId: { } instance }
             ? Status.Get(node)?.Source(StatusSourceType.Custom, instance.ToString(CultureInfo.InvariantCulture))
             : null;
+
+    private static string BoundTitle(SourceStatus? bound) =>
+        $"{bound?.DisplayName ?? "Bound monitor (not polled yet)"}: {bound?.State ?? Severity.Unknown} {bound?.ValueText}".TrimEnd()
+        + (bound?.PendingText is { } pending ? $" — {pending}" : "");
 
     private static string? LinkText(MapLinkView link, SourceStatus? bound) =>
         link.ShowBoundValue && bound?.ValueText is { Length: > 0 } value

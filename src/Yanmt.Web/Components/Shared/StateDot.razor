@@ -1,6 +1,16 @@
-<span class="state-dot" style="background:@Colors.For(State)" title="@State" aria-label="@State"></span>
+@if (Pending)
+{
+    <span class="state-dot pending" style="border-color:@Colors.For(State)" title="@State pending" aria-label="@State pending"></span>
+}
+else
+{
+    <span class="state-dot" style="background:@Colors.For(State)" title="@State" aria-label="@State"></span>
+}
 
 @code {
     [Parameter, EditorRequired] public Severity State { get; set; }
     [Parameter] public StatusColors Colors { get; set; } = StatusColors.Default;
+
+    /// <summary>Hollow dot: a state change waiting on dampening, drawn in the pending state's color.</summary>
+    [Parameter] public bool Pending { get; set; }
 }
