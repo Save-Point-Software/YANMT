@@ -15,7 +15,8 @@ public sealed record NodeListItem(
     bool IcmpEnabled,
     bool SnmpEnabled,
     bool SshEnabled,
-    Severity State);
+    Severity State,
+    NodeColor Color = NodeColor.NoData);
 
 /// <summary>A recorded state change, for a node's recent-events list (the full event log arrives in Phase 6).</summary>
 public sealed record NodeEventItem(DateTime TimestampUtc, Data.Entities.StatusSourceType Source, Severity? OldState, Severity NewState, string Message);

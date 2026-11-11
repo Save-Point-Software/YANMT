@@ -68,7 +68,19 @@ Additional approved packages: `Microsoft.Extensions.Hosting.WindowsServices` (fo
 
 ## Status model (shared by everything)
 
-Every source of status (ICMP, default SNMP stats, each custom monitor, backups) produces a state using one severity scale: **Normal, Warning, Critical, Unknown** (Unknown means no data or poll failed). Each node's map color is the **worst** current state among its enabled monitors. Links take the state of the monitor bound to them, if one is set. Keep the colors configurable, with SNMPc-like defaults (green, yellow, red, gray).
+Every source of status (ICMP, default SNMP stats, each custom monitor, backups) produces a state using one severity scale: **Normal, Warning, Critical, Unknown** (Unknown means no data or poll failed). Events and source states use this scale. Where one severity stands for several sources, the rank is Critical > Warning > Unknown > Normal.
+
+**Node color** shows the *kind* of problem, not the worst severity (#34). The rules are checked in order and the first match wins. Sources that have never reported are left out of every rule.
+
+1. **Gray (No data):** the node is disabled, or no source has reported yet.
+2. **Red (Down):** ICMP is Critical (after `FailuresBeforeCritical`), and SNMP has not answered since ICMP went Critical. That covers SNMP failing, and SNMP not polled since. If only one of ICMP and SNMP is in use (or has reported), that one failing is enough. When ICMP goes Critical, the node's SNMP poll runs at once, out of cycle, so red vs. yellow is settled in seconds.
+3. **Orange (No SNMP):** ICMP answers (Normal or Warning) and SNMP is not responding. Custom monitors, CPU and memory going Unknown at the same time are ignored, so they can't hide orange.
+4. **Yellow (Needs attention):** any other source is not Normal. Examples: a custom monitor Warning, Critical or Unknown; CPU or memory over threshold; a failed backup; a reboot Warning; ICMP loss or latency; ICMP Critical while SNMP answers (ping blocked).
+5. **Green (Normal):** everything is Normal.
+
+"SNMP not responding" means the Uptime source is Unknown after a poll (timeout, authentication failure, or sysUpTime unreadable). ICMP Unknown means the probe itself failed, which is no evidence either way, so for rules 2 and 3 it counts as ICMP not in use. A pending (dampened) change doesn't affect the node color.
+
+**Submaps** show the worst node color inside them, ranked red > orange > yellow > green > gray. An empty submap is gray. **Links** take the severity of the monitor bound to them, if one is set. Colors are configurable. The defaults are green, yellow, orange (`#F28C28`), red and gray.
 
 ## v1 features
 
@@ -82,7 +94,7 @@ Every source of status (ICMP, default SNMP stats, each custom monitor, backups) 
 ### Network map
 
 - **Manually built, like SNMPc.** No auto-discovery or auto-layout in v1. Admins drag nodes onto the canvas, position them, and draw links between them.
-- **Submaps:** a map can contain submap nodes (for example, one per site). A submap's icon shows the worst state of everything inside it, and clicking it opens that submap.
+- **Submaps:** a map can contain submap nodes (for example, one per site). A submap's icon shows the worst node color inside it (see *Status model*), and clicking it opens that submap.
 - Optional background image per map (uploaded floor plan or region graphic), stored in the data folder.
 - Node labels show hostname and, optionally, one chosen value (for example, current latency or CPU).
 - Edit mode for admins, view-only for viewers. The map updates live as states change, with no refresh.
@@ -106,7 +118,7 @@ CPU and memory have default Warning and Critical thresholds that can be changed 
 
 Phase 3 decisions:
 
-- **Reboots:** a detected reboot (snmpEngineBoots up, or sysUpTime backwards away from its wrap) logs an event, and the node shows **Warning until the next SNMP poll**.
+- **Reboots:** a detected reboot (snmpEngineBoots up, or sysUpTime backwards away from its wrap) logs an event, and the node shows **yellow until the next SNMP poll**.
 - **Live tools:** the interfaces tab and the SNMP query tool are open to **viewers and admins**. Both are read-only and bounded; a walk stops at 2,000 rows.
 - **CPU** is the busiest CPU's `cpmCPUTotal5minRev`. **Memory** is the `Processor` pool, preferring HC counters.
 - **Failed polls:** one event on the Uptime source. CPU and memory go Unknown quietly. A device lacking the CPU or memory MIB has no such source, rather than staying Unknown.

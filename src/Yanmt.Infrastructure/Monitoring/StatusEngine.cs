@@ -52,7 +52,8 @@ public sealed class StatusEngine(
     StatusBroadcaster broadcaster,
     INotifier notifier,
     TimeProvider clock,
-    ILogger<StatusEngine> logger)
+    ILogger<StatusEngine> logger,
+    SnmpRecheckRequests? rechecks = null)
 {
     private const int MaxBatch = 500;
 
@@ -241,6 +242,8 @@ public sealed class StatusEngine(
             return source;
         }
 
+        // Nodes whose ICMP just went Critical: SNMP is re-polled now to tell down from ping blocked.
+        var wentCritical = new List<int>();
         foreach (var result in batch.OrderBy(r => r.TimestampUtc))
         {
             // The node may have been deleted or switched off while the poll was in flight.
@@ -252,7 +255,14 @@ public sealed class StatusEngine(
             switch (result)
             {
                 case IcmpPollResult icmp when node.IcmpEnabled:
-                    ApplyIcmp(db, Source(node.Id, StatusSourceType.Icmp, icmp.TimestampUtc, true), node.Hostname, icmp);
+                    var icmpSource = Source(node.Id, StatusSourceType.Icmp, icmp.TimestampUtc, true);
+                    var wasCritical = icmpSource.State == Severity.Critical;
+                    ApplyIcmp(db, icmpSource, node.Hostname, icmp);
+                    if (!wasCritical && icmpSource.State == Severity.Critical && node.Snmp)
+                    {
+                        wentCritical.Add(node.Id);
+                    }
+
                     break;
                 case BackupPollResult backup:
                     ApplyBackup(db, Source(node.Id, StatusSourceType.Backup, backup.TimestampUtc, true), node.Hostname, backup);
@@ -282,6 +292,7 @@ public sealed class StatusEngine(
         var added = db.ChangeTracker.Entries<Event>().Where(e => e.State == EntityState.Added).Select(e => e.Entity).ToList();
         await db.SaveChangesAsync(cancellationToken);
         broadcaster.Publish(await cache.RefreshAsync(db, nodeIds, cancellationToken));
+        rechecks?.Request(wentCritical);
         await NotifyAsync(added, cancellationToken);
     }
 

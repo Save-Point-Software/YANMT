@@ -26,9 +26,9 @@
     else if (_node is not null)
     {
         var live = Status.Get(_node.Id);
-        var state = live?.State ?? _node.State;
+        var color = live?.Color ?? _node.Color;
         <div class="page-header">
-            <h1><StateDot State="state" Colors="_colors" /> @_node.Hostname</h1>
+            <h1><NodeDot Color="color" Colors="_colors" /> @_node.Hostname</h1>
             <AuthorizeView Policy="@YanmtPolicies.Admin">
                 <div class="actions">
                     <button type="button" class="btn" disabled="@(_polling || !_node.Enabled)" @onclick="PollNowAsync">@(_polling ? "Polling…" : "Poll now")</button>
@@ -56,7 +56,7 @@
         <div class="node-header">
             <dl class="details">
                 <dt>State</dt>
-                <dd>@(_node.Enabled ? state.ToString() : "Unknown (node disabled)")</dd>
+                <dd>@(_node.Enabled ? color.Label() : "No data (node disabled)")</dd>
                 <dt>Management IP</dt>
                 <dd class="mono">@_node.ManagementIp</dd>
                 @if (live?.Source(StatusSourceType.Uptime) is { } up)

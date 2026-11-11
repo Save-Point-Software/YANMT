@@ -29,11 +29,13 @@ internal static class MonitoringTestSupport
         return node.Id;
     }
 
-    public static (StatusEngine Engine, StatusCache Cache, StatusBroadcaster Broadcaster) Engine(this TestDatabase test, INotifier? notifier = null)
+    public static (StatusEngine Engine, StatusCache Cache, StatusBroadcaster Broadcaster) Engine(
+        this TestDatabase test, INotifier? notifier = null, SnmpRecheckRequests? rechecks = null)
     {
         var cache = new StatusCache();
         var broadcaster = new StatusBroadcaster(test.Clock);
-        return (new StatusEngine(test.Factory, cache, broadcaster, notifier ?? new InAppNotifier(), test.Clock, NullLogger<StatusEngine>.Instance), cache, broadcaster);
+        return (new StatusEngine(test.Factory, cache, broadcaster, notifier ?? new InAppNotifier(), test.Clock, NullLogger<StatusEngine>.Instance, rechecks),
+            cache, broadcaster);
     }
 
     public static IcmpResult Replies(double avgMs, int received = 4) => new(4, received, avgMs, avgMs, avgMs, null);

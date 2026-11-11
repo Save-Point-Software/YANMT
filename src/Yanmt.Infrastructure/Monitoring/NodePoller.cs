@@ -54,6 +54,9 @@ public abstract class NodePoller<TTarget, TSettings>(
     /// <summary>Longest a single poll may run before it is cancelled and reported as failed.</summary>
     protected abstract TimeSpan Backstop(TSettings settings);
 
+    /// <summary>Out-of-cycle poll requests, by target key, or null if this poller takes none.</summary>
+    protected virtual SnmpRecheckRequests? Rechecks => null;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1), clock);
@@ -131,6 +134,24 @@ public abstract class NodePoller<TTarget, TSettings>(
             if (_targets.TryGetValue(key, out var target) && _inFlight.TryAdd(key, 0))
             {
                 _ = RunAsync(key, target, _settings!, cancellationToken);
+            }
+        }
+
+        // Out-of-cycle requests. One for a target that's in flight waits for that poll to finish,
+        // since the result we want must start after the request. The regular schedule is untouched.
+        if (Rechecks is { } rechecks)
+        {
+            foreach (var key in rechecks.Pending())
+            {
+                if (!_targets.TryGetValue(key, out var target))
+                {
+                    rechecks.Done(key); // not polled by us (disabled, no profile, deleted)
+                }
+                else if (_inFlight.TryAdd(key, 0))
+                {
+                    rechecks.Done(key);
+                    _ = RunAsync(key, target, _settings!, cancellationToken);
+                }
             }
         }
     }

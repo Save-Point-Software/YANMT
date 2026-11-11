@@ -34,10 +34,13 @@ public sealed class SnmpPoller(
     InventoryChangeSignal signal,
     IOptions<PollingOptions> options,
     TimeProvider clock,
-    ILogger<SnmpPoller> logger)
+    ILogger<SnmpPoller> logger,
+    SnmpRecheckRequests? rechecks = null)
     : NodePoller<SnmpPollTarget, SnmpSettings>(scopes, engine, signal, options.Value.SnmpConcurrency, options.Value.ReloadSeconds, clock, logger)
 {
     protected override string Kind => "SNMP";
+
+    protected override SnmpRecheckRequests? Rechecks => rechecks;
 
     protected override async Task<(SnmpSettings Settings, TimeSpan Interval, IReadOnlyDictionary<int, SnmpPollTarget> Targets)> LoadAsync(
         IServiceProvider services, CancellationToken cancellationToken)

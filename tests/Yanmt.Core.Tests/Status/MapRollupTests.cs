@@ -4,14 +4,15 @@ namespace Yanmt.Core.Tests.Status;
 
 public class MapRollupTests
 {
-    // Node ids map to states for these tests.
-    private static readonly Dictionary<int, Severity> NodeStates = new()
+    // Node ids map to colors for these tests.
+    private static readonly Dictionary<int, NodeColor> NodeStates = new()
     {
-        [1] = Severity.Normal,
-        [2] = Severity.Normal,
-        [3] = Severity.Warning,
-        [4] = Severity.Critical,
-        [5] = Severity.Unknown,
+        [1] = NodeColor.Normal,
+        [2] = NodeColor.Normal,
+        [3] = NodeColor.Attention,
+        [4] = NodeColor.Down,
+        [5] = NodeColor.NoData,
+        [6] = NodeColor.NoSnmp,
     };
 
     private static MapRollup Rollup(Dictionary<int, MapContents> maps) => new(maps, id => NodeStates[id]);
@@ -22,7 +23,7 @@ public class MapRollupTests
     public void Map_shows_worst_node()
     {
         var rollup = Rollup(new() { [10] = Map([1, 2, 3]) });
-        Assert.Equal(Severity.Warning, rollup.StateOf(10));
+        Assert.Equal(NodeColor.Attention, rollup.StateOf(10));
     }
 
     [Fact]
@@ -36,23 +37,45 @@ public class MapRollupTests
             [12] = Map([4]),
         });
 
-        Assert.Equal(Severity.Critical, rollup.StateOf(10));
-        Assert.Equal(Severity.Critical, rollup.StateOf(11));
-        Assert.Equal(Severity.Critical, rollup.StateOf(12));
+        Assert.Equal(NodeColor.Down, rollup.StateOf(10));
+        Assert.Equal(NodeColor.Down, rollup.StateOf(11));
+        Assert.Equal(NodeColor.Down, rollup.StateOf(12));
     }
 
     [Fact]
-    public void Empty_map_is_Unknown()
+    public void Empty_map_is_gray()
     {
         var rollup = Rollup(new() { [10] = Map([]) });
-        Assert.Equal(Severity.Unknown, rollup.StateOf(10));
+        Assert.Equal(NodeColor.NoData, rollup.StateOf(10));
     }
 
     [Fact]
-    public void Missing_submap_reference_counts_as_Unknown()
+    public void Missing_submap_reference_adds_nothing()
     {
         var rollup = Rollup(new() { [10] = Map([1], [99]) });
-        Assert.Equal(Severity.Unknown, rollup.StateOf(10));
+        Assert.Equal(NodeColor.Normal, rollup.StateOf(10));
+    }
+
+    [Fact]
+    public void Gray_nodes_do_not_hide_green()
+    {
+        var rollup = Rollup(new() { [10] = Map([1, 5]) });
+        Assert.Equal(NodeColor.Normal, rollup.StateOf(10));
+    }
+
+    [Fact]
+    public void Red_beats_orange_beats_yellow()
+    {
+        var rollup = Rollup(new()
+        {
+            [10] = Map([3, 6]),
+            [11] = Map([3, 6, 4]),
+            [12] = Map([1, 3]),
+        });
+
+        Assert.Equal(NodeColor.NoSnmp, rollup.StateOf(10));
+        Assert.Equal(NodeColor.Down, rollup.StateOf(11));
+        Assert.Equal(NodeColor.Attention, rollup.StateOf(12));
     }
 
     [Fact]
@@ -66,16 +89,16 @@ public class MapRollupTests
             [12] = Map([3], [10]),
         });
 
-        Assert.Equal(Severity.Warning, rollup.StateOf(10));
-        Assert.Equal(Severity.Warning, rollup.StateOf(11));
-        Assert.Equal(Severity.Warning, rollup.StateOf(12));
+        Assert.Equal(NodeColor.Attention, rollup.StateOf(10));
+        Assert.Equal(NodeColor.Attention, rollup.StateOf(11));
+        Assert.Equal(NodeColor.Attention, rollup.StateOf(12));
     }
 
     [Fact]
     public void Self_referencing_map_terminates()
     {
         var rollup = Rollup(new() { [10] = Map([2], [10]) });
-        Assert.Equal(Severity.Normal, rollup.StateOf(10));
+        Assert.Equal(NodeColor.Normal, rollup.StateOf(10));
     }
 
     [Fact]
@@ -92,8 +115,8 @@ public class MapRollupTests
         var b = Rollup(maps);
         var second = (b.StateOf(10), b.StateOf(11));
 
-        Assert.Equal((Severity.Critical, Severity.Critical), first);
-        Assert.Equal((Severity.Critical, Severity.Critical), second);
+        Assert.Equal((NodeColor.Down, NodeColor.Down), first);
+        Assert.Equal((NodeColor.Down, NodeColor.Down), second);
     }
 
     [Fact]
@@ -104,9 +127,9 @@ public class MapRollupTests
             [10] = Map([], [11, 12]),
             [11] = Map([1], [13]),
             [12] = Map([2], [13]),
-            [13] = Map([5]),
+            [13] = Map([6]),
         });
 
-        Assert.Equal(Severity.Unknown, rollup.StateOf(10));
+        Assert.Equal(NodeColor.NoSnmp, rollup.StateOf(10));
     }
 }

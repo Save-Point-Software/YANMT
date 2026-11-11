@@ -15,19 +15,19 @@
 
     <section class="card">
         <h2>Status colors</h2>
-        <p class="muted">Colors used for node, link and submap states on the map and in lists.</p>
+        <p class="muted">Colors used on the map and in lists. Nodes and submaps show the kind of problem (Down, No SNMP, Needs attention, Normal, No data); links and status sources show their state.</p>
 
         @if (_colors is not null)
         {
             <div class="color-grid">
-                @foreach (var (label, severity) in Rows)
+                @foreach (var (label, key) in Rows)
                 {
                     <label class="color-row">
-                        <StateDot State="severity" Colors="Current" />
+                        <span class="state-dot" style="background:@Get(key)"></span>
                         <span>@label</span>
-                        <input type="color" value="@Get(severity)" disabled="@(!_isAdmin)"
-                               @onchange="e => Set(severity, (string)e.Value!)" />
-                        <code>@Get(severity)</code>
+                        <input type="color" value="@Get(key)" disabled="@(!_isAdmin)"
+                               @onchange="e => Set(key, (string)e.Value!)" />
+                        <code>@Get(key)</code>
                     </label>
                 }
             </div>
@@ -260,18 +260,21 @@
 </div>
 
 @code {
-    private static readonly (string Label, Severity Severity)[] Rows =
+    private static readonly (string Label, string Key)[] Rows =
     [
-        ("Normal", Severity.Normal), ("Warning", Severity.Warning),
-        ("Critical", Severity.Critical), ("Unknown / no data", Severity.Unknown),
+        ("Normal", nameof(StatusColors.Normal)), ("Warning / needs attention", nameof(StatusColors.Warning)),
+        ("No SNMP (nodes and submaps)", nameof(StatusColors.Orange)),
+        ("Critical / down", nameof(StatusColors.Critical)), ("Unknown / no data", nameof(StatusColors.Unknown)),
     ];
 
-    private Dictionary<Severity, string>? _colors;
+    private Dictionary<string, string>? _colors;
     private bool _isAdmin;
     private bool _dirty;
     private bool _saved;
 
-    private StatusColors Current => new(Get(Severity.Normal), Get(Severity.Warning), Get(Severity.Critical), Get(Severity.Unknown));
+    private StatusColors Current => new(
+        Get(nameof(StatusColors.Normal)), Get(nameof(StatusColors.Warning)), Get(nameof(StatusColors.Critical)),
+        Get(nameof(StatusColors.Unknown)), Get(nameof(StatusColors.Orange)));
 
     protected override async Task OnInitializedAsync()
     {
@@ -461,15 +464,16 @@
 
     private void Load(StatusColors c) => _colors = new()
     {
-        [Severity.Normal] = c.Normal, [Severity.Warning] = c.Warning,
-        [Severity.Critical] = c.Critical, [Severity.Unknown] = c.Unknown,
+        [nameof(StatusColors.Normal)] = c.Normal, [nameof(StatusColors.Warning)] = c.Warning,
+        [nameof(StatusColors.Critical)] = c.Critical, [nameof(StatusColors.Unknown)] = c.Unknown,
+        [nameof(StatusColors.Orange)] = c.Orange,
     };
 
-    private string Get(Severity s) => _colors![s];
+    private string Get(string key) => _colors![key];
 
-    private void Set(Severity s, string value)
+    private void Set(string key, string value)
     {
-        _colors![s] = value.ToUpperInvariant();
+        _colors![key] = value.ToUpperInvariant();
         _dirty = true;
         _saved = false;
     }

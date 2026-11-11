@@ -63,7 +63,7 @@
                     <g data-viewport>
                         @if (_map is not null)
                         {
-                            var rollup = new MapRollup(_contents, Status.StateOf);
+                            var rollup = new MapRollup(_contents, Status.ColorOf);
                             <rect class="map-canvas" width="@_map.Width" height="@_map.Height" />
                             @if (_map.BackgroundUrl is not null)
                             {
@@ -105,14 +105,28 @@
                             <g class="map-elements">
                                 @foreach (var el in _map.Elements)
                                 {
-                                    var state = StateOf(el, rollup);
-                                    <MapIcon @key="el.Id" Element="el" State="state" Color="@_colors.For(state)" Value="@ValueOf(el)"
+                                    var color = ColorOf(el, rollup);
+                                    <MapIcon @key="el.Id" Element="el" State="color" Color="@_colors.For(color)" Value="@ValueOf(el)"
                                              Selected="@(_selectedElement == el.Id)" LinkSource="@(_linkFrom == el.Id)" />
                                 }
                             </g>
                         }
                     </g>
                 </svg>
+
+                @if (_map is { Elements.Count: > 0 })
+                {
+                    <details class="map-legend" open>
+                        <summary>Legend</summary>
+                        <ul>
+                            @foreach (var c in LegendOrder)
+                            {
+                                <li><NodeDot Color="c" Colors="_colors" /> @c.Label()</li>
+                            }
+                        </ul>
+                        <p class="muted">Links show their monitor's state.</p>
+                    </details>
+                }
 
                 @if (_map is { Elements.Count: 0 } && !_editing)
                 {
@@ -395,8 +409,10 @@
         }
     }
 
-    private Severity StateOf(MapElementView el, MapRollup rollup) =>
-        el.Kind == MapElementKind.Node ? Status.StateOf(el.NodeId!.Value) : rollup.StateOf(el.TargetMapId!.Value);
+    private NodeColor ColorOf(MapElementView el, MapRollup rollup) =>
+        el.Kind == MapElementKind.Node ? Status.ColorOf(el.NodeId!.Value) : rollup.StateOf(el.TargetMapId!.Value);
+
+    private static readonly NodeColor[] LegendOrder = [NodeColor.Down, NodeColor.NoSnmp, NodeColor.Attention, NodeColor.Normal, NodeColor.NoData];
 
     private string? ValueOf(MapElementView el) =>
         el is { Kind: MapElementKind.Node, LabelSourceType: { } type } && el.NodeEnabled
