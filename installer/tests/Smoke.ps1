@@ -156,15 +156,17 @@ try {
 
     New-Item -ItemType Directory -Force -Path $app, $data | Out-Null
     Copy-Item (Join-Path $PublishDir '*') -Destination $app -Recurse -Force
-    icacls $data /inheritance:r /grant "${account}:(OI)(CI)M" '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' /T | Out-Null
-    icacls $app /inheritance:r /grant "${account}:(OI)(CI)RX" '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' /T | Out-Null
-    Grant-KeyRead $cert $userSid
 
     $settings = Get-Content (Join-Path $app 'appsettings.json') -Raw | ConvertFrom-Json
     $settings.Yanmt.Https.CertificateThumbprint = $thumb
     $settings.Yanmt.Roles.AdminGroups = @('.\YANMT-Admins')
     $settings | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $app 'appsettings.json') -Encoding utf8
     Set-Marker '41'
+
+    # ACLs last, as in DEPLOYMENT.md: the runner can't write appsettings.json after the /T grant.
+    icacls $data /inheritance:r /grant "${account}:(OI)(CI)M" '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' /T | Select-Object -Last 1
+    icacls $app /inheritance:r /grant "${account}:(OI)(CI)RX" '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' /T | Select-Object -Last 1
+    Grant-KeyRead $cert $userSid
 
     $credential = [System.Management.Automation.PSCredential]::new($account, $password)
     New-Service -Name YANMT -DisplayName 'YANMT network monitor' -BinaryPathName "`"$app\yanmt.exe`"" `
