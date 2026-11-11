@@ -123,6 +123,7 @@ Phase 4 decisions (custom monitors):
 - **Value maps:** numeric operators use the number. `=` and `≠` accept mapped labels. `contains` and `regex` match the label.
 - **Links** take the bound instance's state color, and can show its value.
 - **History:** removing an assignment, or a tag from a node, deletes that monitor's history there. Disabling a monitor or node keeps it.
+- **Starter timing (#34):** the BGP peer state and Interface oper status starters poll every **60 s** (one table walk each), so with 2 consecutive matches an outage shows within about 2 minutes. Existing installs get the change when the library upgrades to version 2, but only where the interval is still blank and the audit log shows it was never edited; copies are never touched, and deleted starters stay deleted. The monitor page shows the worst-case detection time (interval × consecutive matches).
 
 ### SNMPv3: custom monitors (the core feature)
 

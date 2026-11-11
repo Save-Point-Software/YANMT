@@ -4,7 +4,9 @@
 @using Yanmt.Core.Monitors
 @using Yanmt.Core.Oids
 @using Yanmt.Infrastructure.Monitors
+@using Yanmt.Infrastructure.Settings
 @inject MonitorService Monitors
+@inject SettingsService Settings
 @inject MonitorProbeService Probe
 @inject IOidNameResolver Names
 @inject NavigationManager Nav
@@ -213,6 +215,9 @@
                 </div>
             </div>
             <div class="hint">A new state must hold for this many polls in a row before it takes effect (1 = immediately).</div>
+            <div class="hint" id="detection-time">
+                Detects a change in @MonitorTiming.DescribeDetection(_m.IntervalSeconds ?? _snmpDefaultInterval, _m.ConsecutiveMatches)@(_m.IntervalSeconds is null ? " using the SNMP default interval" : "").
+            </div>
 
             @if (_m.OidMode == OidMode.Table)
             {
@@ -307,11 +312,15 @@
 
     private bool IsNew => Id is null;
 
+    /// <summary>The SNMP poll interval from Settings, used when the monitor's own interval is blank.</summary>
+    private int _snmpDefaultInterval = new Yanmt.Core.Monitoring.SnmpSettings().IntervalSeconds;
+
     protected override async Task OnParametersSetAsync()
     {
         _errors = [];
         _error = null;
         _saved = false;
+        _snmpDefaultInterval = (await Settings.GetAsync(SettingKeys.Snmp)).IntervalSeconds;
         if (IsNew)
         {
             _m = new MonitorEditModel
