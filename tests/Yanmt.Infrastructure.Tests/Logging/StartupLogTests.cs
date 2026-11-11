@@ -6,6 +6,9 @@ public sealed class StartupLogTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "yanmt-tests", "startup-" + Guid.NewGuid().ToString("N"));
 
+    // In the app the logs folder exists before the trace attaches (YanmtPaths.EnsureCreated).
+    public StartupLogTests() => Directory.CreateDirectory(_dir);
+
     [Fact]
     public void Failure_is_appended_with_the_exception_and_timings()
     {
