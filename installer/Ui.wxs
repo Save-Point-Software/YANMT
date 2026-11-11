@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Install:     Welcome > YANMT settings > Ready > Progress > Finish (shows the URL, or that the service didn't start).
+  Maintenance: Welcome > Change (settings again, then a reinstall that rewrites them) / Repair / Remove > Ready.
+  Built from the WixUI dialogs (WixToolset.UI.wixext); only the settings dialog is ours.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Fragment>
+    <UI Id="YanmtUI">
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="ResumeDlg" />
+      <DialogRef Id="UserExit" />
+
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
+
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="YanmtSettingsDlg" Condition="NOT Installed" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Condition="Installed AND PATCH" />
+
+      <Publish Dialog="YanmtSettingsDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Condition="NOT Installed" />
+      <Publish Dialog="YanmtSettingsDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Condition="Installed" />
+      <Publish Dialog="YanmtSettingsDlg" Control="Next" Event="DoAction" Value="ValidateSettingsUi" Order="1" />
+      <Publish Dialog="YanmtSettingsDlg" Control="Next" Event="SpawnDialog" Value="YanmtInvalidDlg" Order="2" Condition="YANMT_SETTINGS_ERROR" />
+      <Publish Dialog="YanmtSettingsDlg" Control="Next" Property="REINSTALL" Value="ALL" Order="3" Condition="Installed AND NOT YANMT_SETTINGS_ERROR" />
+      <Publish Dialog="YanmtSettingsDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="4" Condition="NOT YANMT_SETTINGS_ERROR" />
+
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="YanmtSettingsDlg" Order="1"
+               Condition="NOT Installed OR (Installed AND WixUI_InstallMode = &quot;Change&quot;)" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2"
+               Condition="Installed AND NOT PATCH AND WixUI_InstallMode &lt;&gt; &quot;Change&quot;" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="3" Condition="Installed AND PATCH" />
+
+      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="ChangeButton" Event="NewDialog" Value="YanmtSettingsDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg" />
+
+      <Dialog Id="YanmtSettingsDlg" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="WixUI_Bmp_Banner" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}YANMT settings" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes"
+                 Text="HTTPS certificate, port, role groups and firewall scope." />
+
+        <Control Id="CertLabel" Type="Text" X="20" Y="50" Width="330" Height="11" NoPrefix="yes"
+                 Text="Certificate thumbprint (LocalMachine\My, with a private key):" />
+        <Control Id="CertEdit" Type="Edit" X="20" Y="62" Width="330" Height="17" Property="CERT_THUMBPRINT" Text="{80}" />
+
+        <Control Id="PortLabel" Type="Text" X="20" Y="84" Width="330" Height="11" Text="HTTPS port:" />
+        <Control Id="PortEdit" Type="Edit" X="20" Y="96" Width="60" Height="17" Property="PORT" Text="{5}" />
+
+        <Control Id="AdminLabel" Type="Text" X="20" Y="118" Width="330" Height="11" NoPrefix="yes"
+                 Text="Admin groups, separated by ; (DOMAIN\Group, or .\Group for a local group, created if missing):" />
+        <Control Id="AdminEdit" Type="Edit" X="20" Y="130" Width="330" Height="17" Property="ADMIN_GROUPS" Text="{1024}" />
+
+        <Control Id="ViewerLabel" Type="Text" X="20" Y="152" Width="330" Height="11" Text="Viewer groups (optional), same format:" />
+        <Control Id="ViewerEdit" Type="Edit" X="20" Y="164" Width="330" Height="17" Property="VIEWER_GROUPS" Text="{1024}" />
+
+        <Control Id="FirewallLabel" Type="Text" X="20" Y="186" Width="330" Height="11" NoPrefix="yes"
+                 Text="Firewall: allowed remote addresses, such as 192.0.2.0/24 (empty: no rule is created):" />
+        <Control Id="FirewallEdit" Type="Edit" X="20" Y="198" Width="330" Height="17" Property="FIREWALL_REMOTE_ADDRESS" Text="{1024}" />
+
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)" />
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="YanmtInvalidDlg" Width="300" Height="130" Title="[ProductName] Setup">
+        <Control Id="Icon" Type="Icon" X="15" Y="15" Width="24" Height="24" FixedSize="yes" IconSize="32" Text="WixUI_Ico_Exclam" />
+        <Control Id="Text" Type="Text" X="48" Y="15" Width="240" Height="80" NoPrefix="yes" Text="[YANMT_SETTINGS_ERROR]" />
+        <Control Id="OK" Type="PushButton" X="122" Y="103" Width="56" Height="17" Default="yes" Cancel="yes" Text="!(loc.WixUIOK)">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+      </Dialog>
+    </UI>
+
+    <UIRef Id="WixUI_Common" />
+  </Fragment>
+</Wix>

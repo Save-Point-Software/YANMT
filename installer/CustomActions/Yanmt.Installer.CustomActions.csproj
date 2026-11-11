@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    MSI custom actions (WiX DTF). .NET Framework 4.8 because Windows Server ships it, so nothing is
+    installed for them. Built only by installer/Yanmt.Installer.wixproj on Windows; not in Yanmt.slnx.
+    Packed into Yanmt.Installer.CustomActions.CA.dll (x64 SfxCA stub).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <Platform>x64</Platform>
+    <PlatformTarget>x64</PlatformTarget>
+    <RootNamespace>Yanmt.Installer.CustomActions</RootNamespace>
+    <!-- The SDK's implicit usings include System.Net.Http, which .NET Framework doesn't reference. -->
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>12</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Dtf.CustomAction" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Part of .NET Framework 4.8 on every Windows Server. -->
+    <Reference Include="System.DirectoryServices.AccountManagement" />
+    <Reference Include="System.ServiceProcess" />
+    <Content Include="CustomAction.config" />
+  </ItemGroup>
+
+</Project>

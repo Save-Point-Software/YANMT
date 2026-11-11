@@ -38,6 +38,51 @@ jobs:
       - name: Publish (self-contained single file)
         run: dotnet publish src/Yanmt.Web -c Release -r win-x64 -o publish
 
+  # The MSI (issue #40): built on every PR, then installed, upgraded and removed on this throwaway
+  # runner. The smoke test makes a self-signed certificate, a local user and local groups; it
+  # configures no polling and contacts no devices.
+  installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Publish (self-contained single file)
+        run: dotnet publish src/Yanmt.Web -c Release -r win-x64 -p:Version=0.0.1 -o publish
+
+      # Two versions of the same build, for the upgrade and downgrade checks.
+      - name: Build MSI
+        run: |
+          dotnet build installer/Yanmt.Installer.wixproj -c Release -p:ProductVersion=0.0.1 -p:YanmtPublishDir=${{ github.workspace }}/publish
+          dotnet build installer/Yanmt.Installer.wixproj -c Release -p:ProductVersion=0.0.2 -p:YanmtPublishDir=${{ github.workspace }}/publish
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: yanmt-msi
+          path: installer/bin/x64/Release/*.msi
+
+      - name: MSI smoke test
+        shell: pwsh
+        run: >
+          ./installer/tests/Smoke.ps1
+          -Msi1 installer/bin/x64/Release/yanmt-0.0.1.msi
+          -Msi2 installer/bin/x64/Release/yanmt-0.0.2.msi
+          -PublishDir publish
+          -LogDir smoke-logs
+
+      - name: Upload smoke test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: msi-smoke-logs
+          path: |
+            smoke-logs
+            C:\ProgramData\YANMT\logs
+
   gitleaks:
     runs-on: ubuntu-latest
     steps:

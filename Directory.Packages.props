@@ -15,6 +15,13 @@
   <ItemGroup Label="Dev-time only (not shipped)">
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.13" />
   </ItemGroup>
+  <ItemGroup Label="Installer (build-only, installer/ only; nothing here ships in yanmt.exe)">
+    <!-- The WiX SDK version is in installer/Yanmt.Installer.wixproj (Sdk="WixToolset.Sdk/x.y.z"); keep them equal. -->
+    <PackageVersion Include="WixToolset.Util.wixext" Version="7.0.1" />
+    <PackageVersion Include="WixToolset.Firewall.wixext" Version="7.0.1" />
+    <PackageVersion Include="WixToolset.UI.wixext" Version="7.0.1" />
+    <PackageVersion Include="WixToolset.Dtf.CustomAction" Version="7.0.1" />
+  </ItemGroup>
   <ItemGroup Label="Tests">
     <PackageVersion Include="xunit.v3" Version="4.0.2" />
   </ItemGroup>

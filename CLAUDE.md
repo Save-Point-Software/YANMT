@@ -42,6 +42,9 @@ Runtime: `Microsoft.EntityFrameworkCore.Sqlite`, `Lextm.SharpSnmpLib`, `SSH.NET`
 `Microsoft.AspNetCore.Authentication.Negotiate`.
 Dev/test only: `Microsoft.EntityFrameworkCore.Design` (PrivateAssets=all), `xunit.v3`, and the
 repo-local `dotnet-ef` tool. Versions are pinned centrally in `Directory.Packages.props`.
+Installer build only (`installer/`, nothing ships in yanmt.exe): `WixToolset.Sdk`, `WixToolset.Util.wixext`,
+`WixToolset.Firewall.wixext`, `WixToolset.UI.wixext`, `WixToolset.Dtf.CustomAction` (WiX v7; the owner
+accepted the OSMF EULA on 2026-11-11, see `installer/Directory.Build.props`).
 
 ### 4. No hard-coded monitoring beyond the defaults
 Default SNMP stats are only uptime, CPU, memory, and system info. Interface, BGP, tunnel, and

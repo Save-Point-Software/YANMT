@@ -1,0 +1,12 @@
+<Project>
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <PropertyGroup>
+    <!--
+      WiX v7 requires accepting the Open Source Maintenance Fee EULA (OSMFEULA.txt in the WiX packages).
+      Accepted by the owner on 2026-11-11 (issue #40, decision 1): YANMT earns no revenue, so no fee is due.
+      Re-check this if that ever changes.
+    -->
+    <AcceptEula>wix7</AcceptEula>
+  </PropertyGroup>
+</Project>
