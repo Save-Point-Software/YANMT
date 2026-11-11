@@ -38,6 +38,56 @@ jobs:
       - name: Publish (self-contained single file)
         run: dotnet publish src/Yanmt.Web -c Release -r win-x64 -o publish
 
+  # The MSI (issue #40): built on every PR, then installed, upgraded and removed on this throwaway
+  # runner. The smoke test makes a self-signed certificate, a local user and local groups; it
+  # configures no polling and contacts no devices.
+  installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Publish (self-contained single file)
+        run: dotnet publish src/Yanmt.Web -c Release -r win-x64 -p:Version=0.0.1 -o publish
+
+      # Two versions of the same build, for the upgrade and downgrade checks. Each is copied out
+      # right away: the second is a Rebuild (WiX's incremental check ignores a changed
+      # ProductVersion), and its clean step deletes the first.
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force msi | Out-Null
+          foreach ($v in '0.0.1', '0.0.2') {
+            dotnet build installer/Yanmt.Installer.wixproj -t:Rebuild -c Release -p:ProductVersion=$v -p:YanmtPublishDir=${{ github.workspace }}/publish
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Copy-Item "installer/bin/x64/Release/yanmt-$v.msi" msi/
+          }
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: yanmt-msi
+          path: msi/*.msi
+
+      - name: MSI smoke test
+        shell: pwsh
+        run: >
+          ./installer/tests/Smoke.ps1
+          -Msi1 msi/yanmt-0.0.1.msi
+          -Msi2 msi/yanmt-0.0.2.msi
+          -PublishDir publish
+          -LogDir smoke-logs
+
+      - name: Upload smoke test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: msi-smoke-logs
+          path: smoke-logs
+
   gitleaks:
     runs-on: ubuntu-latest
     steps:

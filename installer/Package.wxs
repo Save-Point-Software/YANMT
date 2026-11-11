@@ -1,0 +1,234 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  YANMT MSI (issue #40). Does DEPLOYMENT.md section 2 (except the certificate itself and antivirus
+  exclusions) and section 3. The service runs as the virtual account NT SERVICE\YANMT.
+
+  Properties (silent: msiexec /i yanmt-X.Y.Z.msi /qn CERT_THUMBPRINT=... ADMIN_GROUPS="CONTOSO\YANMT-Admins" /l*v install.log):
+    PORT                     HTTPS port, default 8443.
+    CERT_THUMBPRINT          Required. In LocalMachine\My, with a private key. Spaces are ignored.
+    ADMIN_GROUPS             Required. ';'-separated, same forms as Yanmt:Roles:AdminGroups. Missing .\Name groups are created.
+    VIEWER_GROUPS            Optional, same forms.
+    FIREWALL_REMOTE_ADDRESS  Optional. Remote address scope of the inbound rule; empty = no rule.
+  Upgrade and repair read them back from HKLM\SOFTWARE\YANMT; a value on the command line wins.
+  An empty value can't be told apart from "not given", so clearing an optional setting is explicit:
+    CLEAR_VIEWER_GROUPS=1             remove the stored viewer groups (appsettings.json is then in charge, as in a manual install).
+    CLEAR_FIREWALL_REMOTE_ADDRESS=1   remove the firewall rule and its stored scope.
+  The settings dialog sets these when a field is left empty. Running /i again on an installed version
+  reinstalls it with the given settings (no REINSTALL needed): msiexec /i yanmt-X.Y.Z.msi /qn CLEAR_VIEWER_GROUPS=1
+  The installer refuses a custom Yanmt:DataPath (only %ProgramData%\YANMT is supported).
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
+     xmlns:fw="http://wixtoolset.org/schemas/v4/wxs/firewall">
+
+  <?define UpgradeCode = "014F0622-3015-4ACD-B9A5-7C92C7B91E72" ?>
+  <?define SettingsKey = "SOFTWARE\YANMT" ?>
+
+  <Package Name="YANMT"
+           Manufacturer="Save-Point Software"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="$(var.UpgradeCode)"
+           Scope="perMachine"
+           Compressed="yes"
+           Language="1033">
+
+    <SummaryInformation Description="YANMT network monitor $(var.ProductVersion)" />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!--
+      Major upgrades. RemoveExistingProducts runs right after InstallInitialize (Windows Installer allows
+      nothing in between: error 2613), so the old version is removed inside this transaction and a failed
+      upgrade rolls back to it. BackupBeforeUpgrade runs right after that: the old uninstall has stopped the
+      service, the data folder is never MSI-owned so it's untouched, and the new binaries (and so migrations)
+      come later. The same or an older version than one installed is refused:
+      migrations are one-way.
+    -->
+    <Upgrade Id="$(var.UpgradeCode)">
+      <UpgradeVersion Property="WIX_UPGRADE_DETECTED" Minimum="0.0.0" IncludeMinimum="yes"
+                      Maximum="$(var.ProductVersion)" IncludeMaximum="no" MigrateFeatures="yes" />
+      <UpgradeVersion Property="WIX_DOWNGRADE_DETECTED" Minimum="$(var.ProductVersion)" IncludeMinimum="yes"
+                      OnlyDetect="yes" />
+    </Upgrade>
+    <Launch Condition="Installed OR NOT WIX_DOWNGRADE_DETECTED"
+            Message="The same or a newer version of YANMT is already installed. Downgrades are blocked because database migrations are one-way. To go back, restore a pre-upgrade backup together with the older version (DEPLOYMENT.md, Backup and restore)." />
+
+    <Property Id="ARPCOMMENTS" Value="Read-only SNMP/ICMP/SSH network monitor" />
+
+    <!-- Installer settings: read back from the registry; the command line (or the dialog) wins. -->
+    <Property Id="PORT" Secure="yes">
+      <RegistrySearch Id="PortSearch" Root="HKLM" Key="$(var.SettingsKey)" Name="Port" Type="raw" Bitness="always64" />
+    </Property>
+    <Property Id="CERT_THUMBPRINT" Secure="yes">
+      <RegistrySearch Id="ThumbprintSearch" Root="HKLM" Key="$(var.SettingsKey)" Name="CertificateThumbprint" Type="raw" Bitness="always64" />
+    </Property>
+    <Property Id="ADMIN_GROUPS" Secure="yes">
+      <RegistrySearch Id="AdminGroupsSearch" Root="HKLM" Key="$(var.SettingsKey)" Name="AdminGroups" Type="raw" Bitness="always64" />
+    </Property>
+    <Property Id="VIEWER_GROUPS" Secure="yes">
+      <RegistrySearch Id="ViewerGroupsSearch" Root="HKLM" Key="$(var.SettingsKey)" Name="ViewerGroups" Type="raw" Bitness="always64" />
+    </Property>
+    <Property Id="FIREWALL_REMOTE_ADDRESS" Secure="yes">
+      <RegistrySearch Id="FirewallSearch" Root="HKLM" Key="$(var.SettingsKey)" Name="FirewallRemoteAddress" Type="raw" Bitness="always64" />
+    </Property>
+
+    <?foreach P in PORT;CERT_THUMBPRINT;ADMIN_GROUPS;VIEWER_GROUPS;FIREWALL_REMOTE_ADDRESS ?>
+    <SetProperty Id="YANMT_CMD_$(P)" Action="YanmtSave_$(P)" Value="[$(P)]" Before="AppSearch" Sequence="both" />
+    <SetProperty Id="$(P)" Action="YanmtRestore_$(P)" Value="[YANMT_CMD_$(P)]" After="AppSearch" Sequence="both" Condition="YANMT_CMD_$(P)" />
+    <?endforeach?>
+    <SetProperty Id="PORT" Action="YanmtDefault_PORT" Value="8443" After="YanmtRestore_PORT" Sequence="both" Condition="NOT PORT" />
+    <!-- Explicit clearing wins over the registry value (a value given in the same run wins over the clear). -->
+    <?foreach P in VIEWER_GROUPS;FIREWALL_REMOTE_ADDRESS ?>
+    <Property Id="CLEAR_$(P)" Secure="yes" />
+    <SetProperty Id="$(P)" Action="YanmtClear_$(P)" Value="[YANMT_NOTHING]" After="YanmtRestore_$(P)" Sequence="both"
+                 Condition="CLEAR_$(P) AND NOT YANMT_CMD_$(P)" />
+    <?endforeach?>
+    <!--
+      /i on an installed version: reinstall everything, so changed settings are written and components
+      whose condition changed (viewer groups, firewall rule) are added or removed. Not for /x or Remove.
+    -->
+    <SetProperty Id="REINSTALL" Action="YanmtReinstall" Value="ALL" Before="CostInitialize" Sequence="execute"
+                 Condition="Installed AND NOT REMOVE AND NOT REINSTALL AND NOT PATCH" />
+
+    <!-- Firewall profiles Domain (1) + Private (2), never Public. -->
+    <Property Id="YANMT_FW_PROFILE" Value="3" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="YANMT" />
+    </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="DATAFOLDER" Name="YANMT" />
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="YANMT" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentGroupRef Id="Service" />
+      <ComponentGroupRef Id="Settings" />
+      <ComponentRef Id="DataFolder" />
+    </Feature>
+
+    <UIRef Id="YanmtUI" />
+
+    <!-- Custom actions (installer/CustomActions). Deferred ones run as LocalSystem. -->
+    <Binary Id="YanmtCA" SourceFile="$(var.Yanmt.Installer.CustomActions.TargetDir)Yanmt.Installer.CustomActions.CA.dll" />
+    <CustomAction Id="ValidateSettingsUi" BinaryRef="YanmtCA" DllEntry="ValidateSettingsUi" Execute="immediate" Return="check" />
+    <CustomAction Id="PrepareInstall" BinaryRef="YanmtCA" DllEntry="PrepareInstall" Execute="immediate" Return="check" />
+    <CustomAction Id="BackupBeforeUpgrade" BinaryRef="YanmtCA" DllEntry="BackupBeforeUpgrade" Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="RemoveLegacyService" BinaryRef="YanmtCA" DllEntry="RemoveLegacyService" Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="SetFolderAcls" BinaryRef="YanmtCA" DllEntry="SetFolderAcls" Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="GrantKeyRead" BinaryRef="YanmtCA" DllEntry="GrantKeyRead" Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="CreateLocalGroups" BinaryRef="YanmtCA" DllEntry="CreateLocalGroups" Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="StartYanmtService" BinaryRef="YanmtCA" DllEntry="StartYanmtService" Execute="deferred" Impersonate="no" Return="ignore" />
+    <CustomAction Id="CleanInstallFolder" BinaryRef="YanmtCA" DllEntry="CleanInstallFolder" Execute="deferred" Impersonate="no" Return="ignore" />
+    <CustomAction Id="ReportServiceState" BinaryRef="YanmtCA" DllEntry="ReportServiceState" Execute="immediate" Return="ignore" />
+    <SetProperty Id="CleanInstallFolder" Value="InstallFolder=[INSTALLFOLDER]" Before="CleanInstallFolder" Sequence="execute" />
+
+    <InstallExecuteSequence>
+      <Custom Action="PrepareInstall" After="CostFinalize" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
+      <RemoveExistingProducts After="InstallInitialize" />
+      <Custom Action="BackupBeforeUpgrade" After="RemoveExistingProducts" Condition="WIX_UPGRADE_DETECTED AND NOT (REMOVE~=&quot;ALL&quot;)" />
+      <Custom Action="RemoveLegacyService" After="StopServices" Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED AND NOT (REMOVE~=&quot;ALL&quot;)" />
+      <Custom Action="SetFolderAcls" After="StartServices" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
+      <Custom Action="GrantKeyRead" After="SetFolderAcls" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
+      <Custom Action="CreateLocalGroups" After="GrantKeyRead" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
+      <Custom Action="StartYanmtService" Before="InstallFinalize" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
+      <Custom Action="CleanInstallFolder" After="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
+    <InstallUISequence>
+      <Custom Action="ReportServiceState" After="ExecuteAction" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
+    </InstallUISequence>
+  </Package>
+
+  <Fragment>
+    <!-- Everything dotnet publish produced, except the two files that need their own components. -->
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.PublishDir)**">
+        <Exclude Files="$(var.PublishDir)yanmt.exe" />
+        <Exclude Files="$(var.PublishDir)appsettings.json" />
+      </Files>
+
+      <!--
+        Kept on upgrade: Permanent, so removing the old version leaves it, and NeverOverwrite, so the new
+        version doesn't replace it (also keeps the appsettings.json of a manual install). CleanInstallFolder
+        deletes it on a real uninstall.
+      -->
+      <Component Id="AppSettings" Permanent="yes" NeverOverwrite="yes">
+        <File Id="AppSettingsJson" Source="$(var.PublishDir)appsettings.json" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="Service" Directory="INSTALLFOLDER">
+      <Component Id="YanmtService">
+        <File Id="YanmtExe" Source="$(var.PublishDir)yanmt.exe" KeyPath="yes" />
+        <ServiceInstall Id="YanmtServiceInstall"
+                        Name="YANMT"
+                        DisplayName="YANMT network monitor"
+                        Description="Read-only SNMP/ICMP/SSH network monitor"
+                        Type="ownProcess"
+                        Start="auto"
+                        ErrorControl="normal"
+                        Account="NT SERVICE\YANMT"
+                        Vital="yes">
+          <!-- Restart after 60 s, three times; the failure count resets after a day. -->
+          <util:ServiceConfig FirstFailureActionType="restart"
+                              SecondFailureActionType="restart"
+                              ThirdFailureActionType="restart"
+                              RestartServiceDelayInSeconds="60"
+                              ResetPeriodInDays="1" />
+        </ServiceInstall>
+        <!-- No Start here: StartYanmtService starts it and never rolls the install back (issue #40, 2.6). -->
+        <ServiceControl Id="YanmtServiceControl" Name="YANMT" Stop="both" Remove="uninstall" Wait="yes" />
+        <!-- A virtual account can't register its event source, so startup errors would never reach the Event Log. -->
+        <util:EventSource Name="YANMT" Log="Application"
+                          EventMessageFile="[WindowsFolder]Microsoft.NET\Framework64\v4.0.30319\EventLogMessages.dll" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="Settings" Directory="INSTALLFOLDER">
+      <!-- Read by the app (Yanmt.Core.Installer.InstallerSettings) above appsettings.json. -->
+      <Component Id="InstallerSettings">
+        <RegistryKey Root="HKLM" Key="$(var.SettingsKey)" ForceDeleteOnUninstall="yes">
+          <RegistryValue Name="Port" Type="string" Value="[PORT]" KeyPath="yes" />
+          <RegistryValue Name="CertificateThumbprint" Type="string" Value="[CERT_THUMBPRINT]" />
+          <RegistryValue Name="AdminGroups" Type="string" Value="[ADMIN_GROUPS]" />
+        </RegistryKey>
+      </Component>
+
+      <!--
+        Only with VIEWER_GROUPS. Transitive: a reinstall with the groups cleared removes the value, and the app
+        then takes Yanmt:Roles:ViewerGroups from appsettings.json (empty by default), as a manual install does.
+      -->
+      <Component Id="ViewerGroupsSetting" Condition="VIEWER_GROUPS" Transitive="yes">
+        <RegistryValue Root="HKLM" Key="$(var.SettingsKey)" Name="ViewerGroups" Type="string"
+                       Value="[VIEWER_GROUPS]" KeyPath="yes" />
+      </Component>
+
+      <!--
+        Only with FIREWALL_REMOTE_ADDRESS. The value is stored so upgrades and repairs keep the rule. Transitive:
+        a reinstall with CLEAR_FIREWALL_REMOTE_ADDRESS removes the rule and the value.
+      -->
+      <Component Id="FirewallRule" Condition="FIREWALL_REMOTE_ADDRESS" Transitive="yes">
+        <RegistryValue Root="HKLM" Key="$(var.SettingsKey)" Name="FirewallRemoteAddress" Type="string"
+                       Value="[FIREWALL_REMOTE_ADDRESS]" KeyPath="yes" />
+        <fw:FirewallException Id="YanmtWebUi"
+                              Name="YANMT web UI"
+                              Description="YANMT HTTPS web UI"
+                              Port="[PORT]"
+                              Protocol="tcp"
+                              Profile="[YANMT_FW_PROFILE]">
+          <fw:RemoteAddress Value="[FIREWALL_REMOTE_ADDRESS]" />
+        </fw:FirewallException>
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <Fragment>
+    <!-- Kept on uninstall: database, backups, maps, logs, secrets.entropy. SetFolderAcls sets its ACL. -->
+    <Component Id="DataFolder" Directory="DATAFOLDER" Guid="6C7E3B2A-9F41-4D8E-A5C2-1B0D7E9F3A64" Permanent="yes">
+      <CreateFolder />
+    </Component>
+  </Fragment>
+</Wix>

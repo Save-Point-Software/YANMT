@@ -1,0 +1,49 @@
+<Project Sdk="WixToolset.Sdk/7.0.1">
+
+  <!--
+    The YANMT MSI (issue #40). Windows only; not in Yanmt.slnx, so `dotnet build` of the solution
+    (and Linux) never touches it. Build:
+
+      dotnet publish src/Yanmt.Web -c Release -r win-x64 -p:Version=1.2.3 -o publish
+      dotnet build installer/Yanmt.Installer.wixproj -c Release -p:ProductVersion=1.2.3 -p:YanmtPublishDir=publish
+
+    Output: installer/bin/x64/Release/yanmt-1.2.3.msi. Keep the SDK version above equal to the
+    WixToolset.* versions in Directory.Packages.props.
+  -->
+  <PropertyGroup>
+    <ProductVersion Condition=" '$(ProductVersion)' == '' ">0.0.1</ProductVersion>
+    <YanmtPublishDir Condition=" '$(YanmtPublishDir)' == '' ">$(MSBuildThisFileDirectory)..\publish</YanmtPublishDir>
+    <!-- A -p: value is a global property and can't be reassigned here, so normalize into another one. -->
+    <YanmtPublishPath>$([MSBuild]::EnsureTrailingSlash($([System.IO.Path]::GetFullPath('$(YanmtPublishDir)'))))</YanmtPublishPath>
+    <OutputName>yanmt-$(ProductVersion)</OutputName>
+    <Platform>x64</Platform>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <!--
+      ICE60: some files from dotnet publish have a version but no language; only matters for
+      file-version comparisons between products sharing a file, and nothing shares this folder.
+    -->
+    <SuppressIces>ICE60</SuppressIces>
+    <DefineConstants>ProductVersion=$(ProductVersion);PublishDir=$(YanmtPublishPath)</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Util.wixext" />
+    <PackageReference Include="WixToolset.Firewall.wixext" />
+    <PackageReference Include="WixToolset.UI.wixext" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="CustomActions\Yanmt.Installer.CustomActions.csproj" />
+  </ItemGroup>
+
+  <Target Name="CheckYanmtVersion" BeforeTargets="CoreCompile">
+    <!-- MSI ProductVersion: major and minor 0-255, build 0-65535. Release tags are vX.Y.Z. -->
+    <Error Condition=" !$([System.Text.RegularExpressions.Regex]::IsMatch('$(ProductVersion)', '^\d{1,3}\.\d{1,3}\.\d{1,5}$')) "
+           Text="ProductVersion '$(ProductVersion)' must be X.Y.Z." />
+    <Error Condition=" $([System.Version]::Parse('$(ProductVersion)').Major) &gt; 255 or $([System.Version]::Parse('$(ProductVersion)').Minor) &gt; 255 or $([System.Version]::Parse('$(ProductVersion)').Build) &gt; 65535 "
+           Text="ProductVersion '$(ProductVersion)' is outside the MSI limits (X and Y at most 255, Z at most 65535)." />
+    <Error Condition=" !Exists('$(YanmtPublishPath)yanmt.exe') "
+           Text="No yanmt.exe in $(YanmtPublishPath). Run dotnet publish src/Yanmt.Web -c Release -r win-x64 -o publish first." />
+  </Target>
+
+</Project>
