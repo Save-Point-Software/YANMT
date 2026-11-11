@@ -19,12 +19,10 @@
     <Platform>x64</Platform>
     <InstallerPlatform>x64</InstallerPlatform>
     <!--
-      ICE63: BackupBeforeUpgrade runs between InstallInitialize and RemoveExistingProducts on purpose
-      (the database must be copied inside the transaction, before the old version is removed).
       ICE60: some files from dotnet publish have a version but no language; only matters for
       file-version comparisons between products sharing a file, and nothing shares this folder.
     -->
-    <SuppressIces>ICE60;ICE63</SuppressIces>
+    <SuppressIces>ICE60</SuppressIces>
     <DefineConstants>ProductVersion=$(ProductVersion);PublishDir=$(YanmtPublishPath)</DefineConstants>
   </PropertyGroup>
 

@@ -60,7 +60,8 @@ public static class ServiceActions
     }
 
     /// <summary>
-    /// Deferred, upgrades only, before RemoveExistingProducts. Stops the service and copies yanmt.db (with
+    /// Deferred, upgrades only, right after RemoveExistingProducts (the old version is gone, the new files
+    /// aren't there yet, so no migration has run). Makes sure the service is stopped and copies yanmt.db (with
     /// -wal/-shm) and secrets.entropy to backups\pre-upgrade\&lt;old version&gt;-&lt;timestamp&gt;. Keeps the newest 3.
     /// A failed copy fails the upgrade (it rolls back): migrations are one-way.
     /// </summary>

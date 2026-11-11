@@ -30,9 +30,11 @@
     <MediaTemplate EmbedCab="yes" />
 
     <!--
-      Major upgrades, by hand rather than MajorUpgrade: the database backup (a deferred action) has to run
-      inside the transaction and before the old version is removed, so RemoveExistingProducts comes right
-      after it (after InstallInitialize). The same or an older version than one installed is refused:
+      Major upgrades. RemoveExistingProducts runs right after InstallInitialize (Windows Installer allows
+      nothing in between: error 2613), so the old version is removed inside this transaction and a failed
+      upgrade rolls back to it. BackupBeforeUpgrade runs right after that: the old uninstall has stopped the
+      service, the data folder is never MSI-owned so it's untouched, and the new binaries (and so migrations)
+      come later. The same or an older version than one installed is refused:
       migrations are one-way.
     -->
     <Upgrade Id="$(var.UpgradeCode)">
@@ -104,8 +106,8 @@
 
     <InstallExecuteSequence>
       <Custom Action="PrepareInstall" After="CostFinalize" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
-      <Custom Action="BackupBeforeUpgrade" After="InstallInitialize" Condition="WIX_UPGRADE_DETECTED AND NOT (REMOVE~=&quot;ALL&quot;)" />
-      <RemoveExistingProducts After="BackupBeforeUpgrade" />
+      <RemoveExistingProducts After="InstallInitialize" />
+      <Custom Action="BackupBeforeUpgrade" After="RemoveExistingProducts" Condition="WIX_UPGRADE_DETECTED AND NOT (REMOVE~=&quot;ALL&quot;)" />
       <Custom Action="RemoveLegacyService" After="StopServices" Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED AND NOT (REMOVE~=&quot;ALL&quot;)" />
       <Custom Action="SetFolderAcls" After="StartServices" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
       <Custom Action="GrantKeyRead" After="SetFolderAcls" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
