@@ -76,7 +76,8 @@ everything else comes from user-defined custom monitors (the starter library shi
   runtime data owned by `StatusEngine`. `MonitorPlanner` turns definitions, assignments, and live tag
   membership into per-node work. Rule, rate, percent, and dampening logic is pure Core
   (`Core/Monitors`). Starter monitors live in `StarterLibrary`; it is versioned, so add new ones
-  with a version bump.
+  with a version bump and an `AddedIn` entry (a starter is only added by the seed that crosses its
+  version). Changes to existing starters go in a guarded upgrade step that skips anything the user edited.
 - Status severity is one scale everywhere: Normal, Warning, Critical, Unknown. Rollup rank:
   Critical > Warning > Unknown > Normal.
 

@@ -189,6 +189,107 @@ public class MonitorServiceTests
         await StarterLibrary.SeedAsync(test.Factory, test.Clock, Ct);
         Assert.Equal(5, (await svc.ListAsync(Ct)).Count); // a deleted example stays deleted
     }
+
+    [Fact]
+    public async Task Fresh_install_polls_bgp_and_oper_status_starters_every_60s()
+    {
+        await using var test = await TestDatabase.CreateAsync();
+        await StarterLibrary.SeedAsync(test.Factory, test.Clock, Ct);
+
+        await using var db = test.Open();
+        var defs = await db.MonitorDefinitions.ToDictionaryAsync(d => d.StarterKey!, Ct);
+        Assert.Equal(60, defs["bgp-peer-state"].IntervalSeconds);
+        Assert.Equal(60, defs["if-oper-status"].IntervalSeconds);
+        Assert.Null(defs["if-util-in"].IntervalSeconds);
+        Assert.Equal("2", (await db.Settings.SingleAsync(x => x.Key == "monitors.starter.version", Ct)).JsonValue);
+    }
+
+    /// <summary>A database as version 1 of the library left it: the six starters, BGP and oper status on the SNMP default.</summary>
+    private static async Task SeedVersion1Async(TestDatabase test)
+    {
+        await using var db = test.Open();
+        var defs = StarterLibrary.Definitions(test.Clock.GetUtcNow().UtcDateTime);
+        foreach (var d in defs.Where(d => d.StarterKey is "bgp-peer-state" or "if-oper-status"))
+        {
+            d.IntervalSeconds = null;
+        }
+
+        db.MonitorDefinitions.AddRange(defs);
+        db.Settings.Add(new Setting { Key = "monitors.starter.version", JsonValue = "1", UpdatedUtc = test.Clock.GetUtcNow().UtcDateTime });
+        await db.SaveChangesAsync(Ct);
+    }
+
+    private static async Task<int> StarterIdAsync(TestDatabase test, string key)
+    {
+        await using var db = test.Open();
+        return await db.MonitorDefinitions.Where(d => d.StarterKey == key).Select(d => d.Id).SingleAsync(Ct);
+    }
+
+    private static async Task SetIntervalAsync(MonitorService svc, int id, int? seconds)
+    {
+        var model = (await svc.GetAsync(id, Ct))!.Value.Model;
+        model.IntervalSeconds = seconds;
+        var r = await svc.UpdateAsync(id, model, Ct);
+        Assert.True(r.Ok, r.Error);
+    }
+
+    [Fact]
+    public async Task Upgrade_to_v2_speeds_up_untouched_starters_and_audits_it()
+    {
+        await using var test = await TestDatabase.CreateAsync();
+        await SeedVersion1Async(test);
+
+        await StarterLibrary.SeedAsync(test.Factory, test.Clock, Ct);
+
+        await using var db = test.Open();
+        var defs = await db.MonitorDefinitions.ToListAsync(Ct);
+        Assert.Equal(6, defs.Count); // nothing re-added
+        Assert.Equal(60, defs.Single(d => d.StarterKey == "bgp-peer-state").IntervalSeconds);
+        Assert.Equal(60, defs.Single(d => d.StarterKey == "if-oper-status").IntervalSeconds);
+        var bgpKey = defs.Single(d => d.StarterKey == "bgp-peer-state").Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Contains(await db.AuditEntries.ToListAsync(Ct), a =>
+            a.EntityType == "MonitorDefinition" && a.Action == "Update" && a.EntityKey == bgpKey && a.Changes!.Contains("IntervalSeconds"));
+        Assert.Equal("2", (await db.Settings.SingleAsync(x => x.Key == "monitors.starter.version", Ct)).JsonValue);
+    }
+
+    [Fact]
+    public async Task Upgrade_to_v2_keeps_intervals_the_user_chose()
+    {
+        await using var test = await TestDatabase.CreateAsync();
+        await SeedVersion1Async(test);
+        var svc = test.Service();
+        var bgp = await StarterIdAsync(test, "bgp-peer-state");
+        var oper = await StarterIdAsync(test, "if-oper-status");
+        await SetIntervalAsync(svc, bgp, 120);            // set explicitly
+        await SetIntervalAsync(svc, oper, 120);           // set, then put back to the SNMP default
+        await SetIntervalAsync(svc, oper, null);
+
+        await StarterLibrary.SeedAsync(test.Factory, test.Clock, Ct);
+
+        await using var db = test.Open();
+        Assert.Equal(120, (await db.MonitorDefinitions.FindAsync([bgp], Ct))!.IntervalSeconds);
+        Assert.Null((await db.MonitorDefinitions.FindAsync([oper], Ct))!.IntervalSeconds);
+    }
+
+    [Fact]
+    public async Task Upgrade_to_v2_leaves_copies_alone_and_does_not_restore_deleted_starters()
+    {
+        await using var test = await TestDatabase.CreateAsync();
+        await SeedVersion1Async(test);
+        var svc = test.Service();
+        var bgp = await StarterIdAsync(test, "bgp-peer-state");
+        var copied = await svc.CopyAsync(bgp, Ct);
+        Assert.True(copied.Ok, copied.Error);
+        var copyId = copied.Id!.Value;
+        Assert.True((await svc.DeleteAsync(await StarterIdAsync(test, "if-oper-status"), Ct)).Ok);
+
+        await StarterLibrary.SeedAsync(test.Factory, test.Clock, Ct);
+
+        await using var db = test.Open();
+        Assert.Null((await db.MonitorDefinitions.FindAsync([copyId], Ct))!.IntervalSeconds);
+        Assert.Equal(60, (await db.MonitorDefinitions.FindAsync([bgp], Ct))!.IntervalSeconds);
+        Assert.DoesNotContain(await db.MonitorDefinitions.ToListAsync(Ct), d => d.StarterKey == "if-oper-status");
+    }
 }
 
 public class MonitorPlannerTests
