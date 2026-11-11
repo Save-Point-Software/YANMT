@@ -126,6 +126,9 @@ function Set-Marker([string] $value) {
 function Get-Marker { (Get-Content (Join-Path $app 'appsettings.json') -Raw | ConvertFrom-Json).Yanmt.Logging.RetainedFileCount }
 
 function Show-Logs {
+    Write-Host '--- Service Control Manager events'
+    Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager'; StartTime = (Get-Date).AddMinutes(-30) } -MaxEvents 8 -ErrorAction SilentlyContinue |
+        ForEach-Object { Write-Host "$($_.TimeCreated) $($_.Id): $($_.Message)" }
     foreach ($f in 'startup-failure.log', 'startup.log') {
         $p = Join-Path $data "logs\$f"
         if (Test-Path $p) { Write-Host "--- $p"; Get-Content $p -Tail 40 }
@@ -152,7 +155,9 @@ try {
     for ($n = 0; $n -lt $lines.Count; $n++) { if ($lines[$n] -like 'SeServiceLogonRight*') { $i = $n } }
     if ($i -ge 0) { $lines[$i] = $lines[$i] + ",*$userSid" } else { $lines.Insert($lines.IndexOf('[Privilege Rights]') + 1, "SeServiceLogonRight = *$userSid") }
     Set-Content $inf $lines -Encoding Unicode
-    secedit /configure /db (Join-Path $env:TEMP 'yanmt-rights.sdb') /cfg $inf /areas USER_RIGHTS | Out-Null
+    secedit /configure /db (Join-Path $env:TEMP 'yanmt-rights.sdb') /cfg $inf /areas USER_RIGHTS | Select-Object -Last 2
+    secedit /export /cfg $inf /areas USER_RIGHTS | Out-Null
+    Write-Host "Log on as a service: $((Get-Content $inf) -like 'SeServiceLogonRight*')  (svc-yanmt is *$userSid)"
 
     New-Item -ItemType Directory -Force -Path $app, $data | Out-Null
     Copy-Item (Join-Path $PublishDir '*') -Destination $app -Recurse -Force
@@ -171,7 +176,7 @@ try {
     $credential = [System.Management.Automation.PSCredential]::new($account, $password)
     New-Service -Name YANMT -DisplayName 'YANMT network monitor' -BinaryPathName "`"$app\yanmt.exe`"" `
         -StartupType Automatic -Credential $credential | Out-Null
-    Start-Service YANMT
+    try { Start-Service YANMT } catch { Show-Logs; throw }
     $ready = Wait-Until { (Test-Path "$data\secrets.entropy") -and (Test-Path "$data\yanmt.db") } 120
     if (-not $ready) { Show-Logs; throw 'The manual install did not create secrets.entropy and yanmt.db.' }
     Check ((Get-Service-Info).StartName -eq $account) 'manual install runs as svc-yanmt'
