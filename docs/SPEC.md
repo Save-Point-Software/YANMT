@@ -243,6 +243,10 @@ Phase 6 decisions (events, retention, export):
 
 ## Deployment (document all of this in PowerShell)
 
+- **Delivery: an MSI** (WiX, issue #40), built by GitHub Actions and attached to each GitHub Release with
+  `SHA256SUMS.txt`. It does the install below for the virtual account `NT SERVICE\YANMT` and stores the
+  installer settings in `HKLM\SOFTWARE\YANMT`. WiX is a build-time tool only; nothing extra lands on the
+  server. The manual PowerShell install stays documented.
 - `dotnet publish` command for the self-contained single-file build
 - Install: copy the folder, create the data directory with correct ACLs, register the service with `sc.exe` or `New-Service`, set the service account, bind the certificate, and open the firewall port
 - Upgrade (stop the service, swap the binaries, start the service; migrations apply automatically on startup) and uninstall

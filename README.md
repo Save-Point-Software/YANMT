@@ -16,8 +16,13 @@ to install it.
 
 ## Install
 
-The step-by-step Windows Server guide is [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md): publish, data
-folder ACLs, service account or gMSA, certificate, `New-Service`, firewall, groups, upgrade,
+The recommended way is the MSI: download `yanmt-X.Y.Z.msi` from the GitHub release and run it
+(silent installs work too). It runs the service as `NT SERVICE\YANMT` and sets up the folders,
+permissions, groups and firewall rule. You provide the certificate.
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) section 1 covers the properties, upgrade, uninstall,
+and moving a manual install to the MSI.
+
+The guide also keeps the manual install step by step: publish, data folder ACLs, service account or gMSA, certificate, `New-Service`, firewall, groups, upgrade,
 uninstall, the full configuration reference, and backup/restore (including the DPAPI caveat when
 moving to another server). On a server that isn't domain-joined, the firewall rule needs
 `-Profile Domain,Private`; the guide explains why.

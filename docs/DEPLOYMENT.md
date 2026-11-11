@@ -1,15 +1,195 @@
 # YANMT deployment guide (Windows Server, PowerShell)
 
 YANMT ships as one self-contained `yanmt.exe` that runs as a Windows service. Nothing else is installed on
-the server: no .NET runtime, IIS, database server, Python or Node. Run every command below from the same
-elevated PowerShell prompt; later steps reuse variables (`$app`, `$data`, `$cert`, `$account`) set by
-earlier ones. Replace the example names (`svc-yanmt`, `YANMT-Admins`, `CONTOSO`, the management subnet)
-with your own.
+the server: no .NET runtime, IIS, database server, Python or Node. There are two ways to install it:
 
-The steps are in the order they must run: the certificate before its private-key grant, and the account,
-groups and configuration before the service's first start.
+- **The MSI (recommended, section 1).** One installer from GitHub Releases does the folders, permissions,
+  service, groups, settings and firewall. The service runs as the virtual account `NT SERVICE\YANMT`, so
+  there is no service-account password.
+- **By hand (sections 2 to 4).** Copy the published folder and run the PowerShell steps yourself, with a
+  local account or gMSA. Keep this for servers where you can't run an MSI, or to see what the MSI does.
 
-## 1. Build the package
+Sections 5 to 7 (configuration, backup and restore, troubleshooting) apply to both.
+
+Run every command below from the same elevated PowerShell prompt; later steps reuse variables (`$app`,
+`$data`, `$cert`, `$account`) set by earlier ones. Replace the example names (`svc-yanmt`, `YANMT-Admins`,
+`CONTOSO`, the management subnet) with your own.
+
+## 1. Install with the MSI
+
+The MSI does everything in sections 3 and 4 except three things, which stay manual: the certificate itself,
+adding people to the groups, and antivirus exclusions. It never contacts a device.
+
+### 1.1 Before you install
+
+1. **Download** `yanmt-X.Y.Z.msi` and `SHA256SUMS.txt` from the GitHub release, and check the hash:
+
+   ```powershell
+   Get-FileHash .\yanmt-1.2.3.msi -Algorithm SHA256      # must match the line in SHA256SUMS.txt
+   Unblock-File .\yanmt-1.2.3.msi
+   ```
+
+   The MSI is **not code-signed** yet. Windows marks the download as coming from the internet, and
+   SmartScreen may show "Windows protected your PC" (*More info > Run anyway*). `Unblock-File` clears the
+   mark once you have checked the hash.
+2. **Certificate:** put it in `LocalMachine\My` with its private key (section 3.2) and note the thumbprint.
+   The MSI never creates one. It checks that the certificate exists and has a private key, and it grants the
+   service Read on that key.
+3. **Groups:** domain groups must already exist. A local group written as `.\Name` is created if it's
+   missing. The MSI never adds members (section 3.4).
+4. **Data folder:** the MSI uses only `%ProgramData%\YANMT`. If `appsettings.json` or a machine environment
+   variable sets a different `Yanmt:DataPath`, the install stops before changing anything.
+
+### 1.2 Properties
+
+| Property | Default | Meaning |
+| --- | --- | --- |
+| `CERT_THUMBPRINT` | (required) | Thumbprint of the HTTPS certificate in `LocalMachine\My`. Spaces are ignored. |
+| `ADMIN_GROUPS` | (required) | Admin groups, separated by `;`: `CONTOSO\YANMT-Admins`, `.\YANMT-Admins` (local), or a SID. Single backslashes: this is not JSON. |
+| `VIEWER_GROUPS` | empty | Viewer groups, same format. |
+| `PORT` | `8443` | HTTPS port, 1 to 65535. |
+| `FIREWALL_REMOTE_ADDRESS` | empty | Remote addresses allowed by the inbound rule: an address, subnet (`192.0.2.0/24`), range, or `LocalSubnet`, separated by `,` (`Any` is refused). **Empty means no firewall rule is created.** |
+| `CLEAR_VIEWER_GROUPS` | | `1` removes the stored viewer groups (section 1.4). |
+| `CLEAR_FIREWALL_REMOTE_ADDRESS` | | `1` removes the firewall rule and its stored scope (section 1.4). |
+
+The values are stored under `HKLM\SOFTWARE\YANMT` and override the same keys in `appsettings.json`
+(section 5). An upgrade or repair reads them back, so you don't type them again. A value on the command
+line always wins.
+
+### 1.3 Install
+
+**Interactive:** run the MSI. One dialog asks for the properties above. Bad values (unknown certificate,
+group that doesn't resolve, bad port) are shown there before anything is installed.
+
+**Silent:**
+
+```powershell
+msiexec /i yanmt-1.2.3.msi /qn /l*v install.log `
+    CERT_THUMBPRINT=A1B2C3D4E5F60718293A4B5C6D7E8F9012345678 `
+    ADMIN_GROUPS="CONTOSO\YANMT-Admins" VIEWER_GROUPS="CONTOSO\YANMT-Viewers" `
+    FIREWALL_REMOTE_ADDRESS=192.0.2.0/24
+```
+
+Bad settings fail the install with exit code 1603 and change nothing; the reason is in the log.
+
+What the MSI does:
+
+- Binaries in `C:\Program Files\YANMT`. Read and execute for `NT SERVICE\YANMT`, Full control for
+  Administrators and SYSTEM.
+- `C:\ProgramData\YANMT`: Modify for the service, Full control for Administrators and SYSTEM, nothing
+  inherited. Files already in it are reset to inherit that ACL, and `secrets.entropy` gets its own
+  protected ACL.
+- Read for the service on the certificate's private key. The installer reads the grant back and fails if
+  it isn't there.
+- Creates missing local (`.\Name`) groups.
+- Registers the `YANMT` service (automatic start; on failure it restarts after 60 s, three times, and the
+  count resets after a day) and the `YANMT` Event Log source in the Application log.
+- If `FIREWALL_REMOTE_ADDRESS` is set, an inbound rule *YANMT web UI* for TCP `PORT`, profiles Domain and
+  Private (never Public), limited to those addresses.
+- Starts the service. **A service that doesn't start does not roll the install back.** The final dialog shows
+  the sign-in URL, or says the service didn't start and points to `C:\ProgramData\YANMT\logs\startup-failure.log`
+  (section 7). A silent install still exits 0; look for `YANMT WARNING` in its log.
+
+Then, by hand: add people to the groups (section 3.4), add the antivirus exclusions (section 3.9), and sign in
+(section 3.8). Other settings (log sizes, polling concurrency, listen address) still go in
+`C:\Program Files\YANMT\appsettings.json` (section 5).
+
+For the commands in sections 6 and 7, set:
+
+```powershell
+$app     = 'C:\Program Files\YANMT'
+$data    = 'C:\ProgramData\YANMT'
+$account = 'NT SERVICE\YANMT'
+```
+
+### 1.4 Change settings
+
+Run the installed version's MSI again, or use *Change* in *Apps > Installed apps*: the dialog opens with
+the current values. Silent, give only what changes:
+
+```powershell
+msiexec /i yanmt-1.2.3.msi /qn /l*v change.log PORT=9443
+msiexec /i yanmt-1.2.3.msi /qn /l*v change.log CLEAR_VIEWER_GROUPS=1 CLEAR_FIREWALL_REMOTE_ADDRESS=1
+```
+
+An empty value on the command line means "not given", so use the `CLEAR_` properties to remove the viewer
+groups or the firewall rule. In the dialog, leaving those fields empty does the same. With the viewer groups
+cleared, `Yanmt:Roles:ViewerGroups` from `appsettings.json` applies again (empty by default).
+
+### 1.5 Upgrade
+
+Run the newer MSI (interactively, or silently with no properties). The MSI:
+
+1. Stops the service.
+2. Copies `yanmt.db` (with `-wal`/`-shm`) and `secrets.entropy` to
+   `C:\ProgramData\YANMT\backups\pre-upgrade\<old version>-<timestamp>\`. It keeps the newest three.
+3. Replaces the binaries. It keeps `appsettings.json`.
+4. Starts the service, which applies database migrations.
+
+A failed upgrade rolls back to the old version. The same or an older version is refused, because
+migrations are one-way. To go back to an older version:
+
+```powershell
+$bk = Get-ChildItem "$data\backups\pre-upgrade" | Sort-Object Name | Select-Object -Last 1   # check it's the right one
+msiexec /x yanmt-1.2.4.msi /qn /l*v uninstall.log      # the newer version; the data folder stays
+Remove-Item "$data\yanmt.db", "$data\yanmt.db-wal", "$data\yanmt.db-shm" -ErrorAction SilentlyContinue
+Copy-Item "$($bk.FullName)\*" $data
+msiexec /i yanmt-1.2.3.msi /qn /l*v install.log CERT_THUMBPRINT=... ADMIN_GROUPS=...
+```
+
+Delete the newer `-wal`/`-shm` files as shown: SQLite would otherwise apply them to the older database.
+The uninstall removes the stored settings, so give the properties again. Reinstalling resets the data
+folder ACL, including the restored files.
+
+### 1.6 Uninstall
+
+Use *Apps > Installed apps > YANMT > Uninstall*, or `msiexec /x yanmt-1.2.3.msi /qn /l*v uninstall.log`.
+
+Removed: the service, the firewall rule, the Event Log source, `HKLM\SOFTWARE\YANMT`, and the install
+folder. That includes **`appsettings.json`**; an upgrade keeps it, an uninstall doesn't. Copy it somewhere
+else first if you edited it and want to keep it.
+
+Kept: the data folder (database, backups, maps, logs, `secrets.entropy`), the service's Read grant on the
+certificate key, and the local groups. To discard everything as well:
+
+```powershell
+Remove-Item 'C:\ProgramData\YANMT' -Recurse   # database, backups and credentials: gone for good
+```
+
+### 1.7 Moving a manual install to the MSI
+
+Back up first (section 6), then install the MSI as in section 1.3 with the properties. Your
+`appsettings.json` is not read for them. The MSI:
+
+- stops and deletes the existing `YANMT` service, whatever account it ran as, and creates its own as
+  `NT SERVICE\YANMT`;
+- resets the data folder ACL, including existing files and `secrets.entropy`, so the old account's grants
+  are gone, and grants the service Read on the certificate key;
+- keeps `appsettings.json`. Its port, certificate and group values are now overridden by the MSI's.
+
+Stored credentials and config history stay readable: DPAPI is machine scope, and `secrets.entropy` stays in
+place. A manual install with a custom `Yanmt:DataPath` is refused (section 1.1), and the old service keeps
+running.
+
+If the manual install has a firewall rule and you set `FIREWALL_REMOTE_ADDRESS`, remove the old rule
+**before** installing: both are named *YANMT web UI*, and `Remove-NetFirewallRule -DisplayName` would delete
+both. Without `FIREWALL_REMOTE_ADDRESS`, keep the old rule; the MSI won't touch it.
+
+```powershell
+Remove-NetFirewallRule -DisplayName 'YANMT web UI'   # only before an install with FIREWALL_REMOTE_ADDRESS
+```
+
+The MSI doesn't delete the old service account. Once the service runs under the MSI, you can remove it:
+
+```powershell
+Remove-LocalUser svc-yanmt                    # local account
+# gMSA: Uninstall-ADServiceAccount svc-yanmt, and delete it in AD if nothing else uses it.
+```
+
+The old account's Read grant on the certificate's private key remains; remove it in `certlm.msc` (*Manage
+Private Keys*) if you like. Antivirus exclusions use the same paths, so they still apply.
+
+## 2. Build the package
 
 On a build machine with the .NET SDK (not the server):
 
@@ -20,9 +200,12 @@ dotnet publish src/Yanmt.Web -c Release -r win-x64 -o publish
 The output is self-contained, single-file, win-x64 and untrimmed. Copy the `publish` folder to the server.
 `appsettings.Development.json` is not included.
 
-## 2. Install
+## 3. Install by hand
 
-### 2.1 Folders
+The steps run in this order: the certificate before its private-key grant, and the account, groups and
+configuration before the service's first start.
+
+### 3.1 Folders
 
 ```powershell
 $app  = 'C:\Program Files\YANMT'      # binaries and appsettings.json
@@ -33,13 +216,13 @@ Copy-Item .\publish\* -Destination $app -Recurse -Force
 ```
 
 The data folder defaults to `%ProgramData%\YANMT`. To move it, set `Yanmt:DataPath` in `appsettings.json`
-(see section 4). YANMT creates `logs`, `backups` and `maps` inside it at startup.
+(see section 5). YANMT creates `logs`, `backups` and `maps` inside it at startup.
 
-### 2.2 Certificate
+### 3.2 Certificate
 
 YANMT serves HTTPS only and binds the certificate itself through Kestrel: there is no
 `netsh http add sslcert` step. The certificate must be in `LocalMachine\My` before you grant the service
-account access to its private key (section 2.3).
+account access to its private key (section 3.3).
 
 **Production:** use a certificate from your internal CA (or a public one) with the server's DNS name in the
 subject alternative names. Import it into `LocalMachine\My`, then load it:
@@ -55,20 +238,20 @@ on the client.
 $cert = New-SelfSignedCertificate -DnsName $env:COMPUTERNAME -CertStoreLocation Cert:\LocalMachine\My
 ```
 
-Either way, note the thumbprint for `Yanmt:Https:CertificateThumbprint` (section 2.5):
+Either way, note the thumbprint for `Yanmt:Https:CertificateThumbprint` (section 3.5):
 
 ```powershell
 $cert.Thumbprint
 ```
 
-### 2.3 Service account
+### 3.3 Service account
 
 Run YANMT as a dedicated low-privilege account, not LocalSystem. On a domain a gMSA is preferred; on a
 workgroup server use a local account. The account needs:
 
 | Right | Why |
 | --- | --- |
-| Log on as a service | Start as a service. See the note at the end of section 2.6. |
+| Log on as a service | Start as a service. See the note at the end of section 3.6. |
 | Modify on the data folder | Database, WAL files, backups, map images, logs, `secrets.entropy`. |
 | Read and execute on the install folder | Run the exe. |
 | Read on the certificate's private key | Kestrel loads the HTTPS certificate at startup. |
@@ -129,11 +312,11 @@ The service must be able to read the certificate's private key. If it can't, sta
 4. *Add* the service account (for a local account, set *From this location* to the server itself),
    give it **Read** only (clear *Full control*), and click *OK*.
 
-**Script (alternative):** run this only after the certificate exists (`$cert` from section 2.2), then run
+**Script (alternative):** run this only after the certificate exists (`$cert` from section 3.2), then run
 the check below it. In the v1 shakedown a scripted grant didn't take effect, so don't skip the check.
 
 ```powershell
-if (-not $cert) { throw 'Set $cert first (section 2.2).' }
+if (-not $cert) { throw 'Set $cert first (section 3.2).' }
 if (-not $cert.HasPrivateKey) { throw "Certificate $($cert.Thumbprint) has no private key." }
 
 # RSA or ECDSA; anything else stops here.
@@ -169,10 +352,10 @@ icacls $file          # after the script; the service account must be listed wit
 After the console method, reopen *Manage Private Keys* and confirm the account is listed with *Read*.
 If it isn't there, the service will fail with "Keyset does not exist".
 
-### 2.4 Windows groups
+### 3.4 Windows groups
 
 Authentication is Windows Integrated (Negotiate). Create the groups **before** the configuration and the
-service's first start; they are referenced in `appsettings.json` (section 2.5).
+service's first start; they are referenced in `appsettings.json` (section 3.5).
 
 **Workgroup (local groups):**
 
@@ -185,10 +368,10 @@ Add-LocalGroupMember -Group 'YANMT-Admins' -Member "$env:COMPUTERNAME\alice"
 **Domain:** create `YANMT-Admins` and `YANMT-Viewers` in AD (or use local groups containing domain users)
 and add your people.
 
-### 2.5 Configuration
+### 3.5 Configuration
 
-Edit `$app\appsettings.json` (full reference in section 4). Set at least the certificate thumbprint from
-section 2.2 and the groups from section 2.4. HTTPS only; there is no HTTP listener.
+Edit `$app\appsettings.json` (full reference in section 5). Set at least the certificate thumbprint from
+section 3.2 and the groups from section 3.4. HTTPS only; there is no HTTP listener.
 
 Workgroup, local groups:
 
@@ -213,10 +396,10 @@ Domain groups:
 - On a domain use `DOMAIN\\Group` (the NetBIOS domain name, backslash doubled).
 - The thumbprint has no spaces.
 
-### 2.6 Register and start the service
+### 3.6 Register and start the service
 
 > The first run creates `$data\secrets.entropy`. It gets the data folder's permissions (so the service
-> account from section 2.3 can read it, whoever ran YANMT first), without Users or other broad groups, plus
+> account from section 3.3 can read it, whoever ran YANMT first), without Users or other broad groups, plus
 > SYSTEM and Administrators. Set the data folder permissions **before** the first run, by hand or as a service.
 
 **Local account:** build the credential from the full `COMPUTERNAME\name` (the Server 2025 credential
@@ -243,7 +426,7 @@ Start-Service YANMT
 ```
 
 The service name must be `YANMT`. Check it is running with `Get-Service YANMT`. If it doesn't start, see
-section 6.
+section 7.
 
 **Log on as a service (error 1069):** the first `Start-Service` can fail with a logon error (1069, "The
 service did not start due to a logon failure") if the account lacks *Log on as a service*. Fix: open
@@ -251,7 +434,7 @@ service did not start due to a logon failure") if the account lacks *Log on as a
 (Windows grants the right when you do this), then start the service again. You can also grant the right in
 Local Security Policy or a GPO (*User Rights Assignment > Log on as a service*).
 
-### 2.7 Firewall
+### 3.7 Firewall
 
 ```powershell
 $mgmtSubnet = '192.0.2.0/24'   # REPLACE with your management subnet (this is a documentation example)
@@ -267,14 +450,14 @@ machines. Check the profile with `Get-NetConnectionProfile`. Don't add `Public`.
 Use the port from `Yanmt:Https:Port`. YANMT's outbound traffic needs ICMP echo, UDP 161 (SNMP) and TCP 22
 (SSH) to the devices.
 
-### 2.8 First sign-in
+### 3.8 First sign-in
 
 Browse to `https://<server-dns-name>:8443/`. Use the DNS name that matches the certificate and that your
 browser treats as intranet, otherwise it will prompt for credentials instead of signing in silently.
 A user in neither group gets "Access denied"; after changing group membership they must sign out of
 Windows and back in.
 
-### 2.9 Antivirus
+### 3.9 Antivirus
 
 If Defender (or another AV) scans the data folder, the SQLite database and its `-wal` / `-shm` files can
 be slowed or locked. Add exclusions:
@@ -286,7 +469,7 @@ Add-MpPreference -ExclusionProcess "$app\yanmt.exe"
 
 Apply the same in your enterprise AV policy if it is not Defender.
 
-## 3. Upgrade and uninstall
+## 4. Upgrade and uninstall (manual install)
 
 ### Upgrade
 
@@ -294,7 +477,7 @@ Database migrations apply automatically at startup.
 
 ```powershell
 Stop-Service YANMT
-# Back up first (section 5). Then swap the binaries; keep your edited appsettings.json.
+# Back up first (section 6). Then swap the binaries; keep your edited appsettings.json.
 Copy-Item "$app\appsettings.json" "$env:TEMP\appsettings.json.bak"
 Copy-Item .\publish\* -Destination $app -Recurse -Force -Exclude appsettings.json
 Start-Service YANMT
@@ -315,31 +498,19 @@ Remove-Item $app -Recurse
 # Remove-Item $data -Recurse
 ```
 
-**MSI installs:** uninstalling with the MSI also deletes `appsettings.json` from the install folder
-(an upgrade keeps it). Copy it somewhere else first if you edited it and want to keep it. The data
-folder is kept, as above.
+For an MSI install, see sections 1.5 and 1.6 instead.
 
-### After moving a manual install to the MSI
-
-The MSI replaces the old service, which then runs as `NT SERVICE\YANMT`, and removes the old account's
-grants from the data folder. It doesn't delete the local `svc-yanmt` account. Once the service runs
-under the MSI, you can remove that account:
-
-```powershell
-Remove-LocalUser svc-yanmt
-```
-
-## 4. Configuration reference
+## 5. Configuration reference
 
 Settings live in `appsettings.json` next to the exe. **It holds no secrets.** Device credentials are
 stored encrypted in the database. Any key can also be set with an environment variable using `__` as
 the separator (for example `Yanmt__Https__Port=9443`). Restart the service after changes.
 
-**Installer settings.** The MSI (issue #40) stores `PORT`, `CERT_THUMBPRINT`, `ADMIN_GROUPS` and
+**Installer settings.** The MSI (section 1) stores `PORT`, `CERT_THUMBPRINT`, `ADMIN_GROUPS` and
 `VIEWER_GROUPS` under `HKLM\SOFTWARE\YANMT` (values `Port`, `CertificateThumbprint`, `AdminGroups`,
 `ViewerGroups`; group lists separated by `;`). They override `appsettings.json`, and environment
 variables override them. An empty or missing value leaves `appsettings.json` in charge, and a manual
-install has no such key. Change them by running the installer again (*Change*), not in `appsettings.json`.
+install has no such key. Change them with the installer (section 1.4), not in `appsettings.json`.
 The startup log names the settings that came from the registry.
 
 | Key | Default | Meaning |
@@ -349,7 +520,7 @@ The startup log names the settings that came from the registry.
 | `Yanmt:Https:ListenAddress` | empty (all addresses) | A single IP address to bind to. |
 | `Yanmt:Https:CertificateThumbprint` | empty | Certificate to serve. Required outside development. |
 | `Yanmt:Https:StoreName` / `StoreLocation` | `My` / `LocalMachine` | Where to find the certificate. |
-| `Yanmt:Roles:AdminGroups` | empty | Groups with full access: `CONTOSO\YANMT-Admins`, `YANMT-Admins` or `.\YANMT-Admins` (local), or a SID. Double each backslash in JSON (section 2.5). |
+| `Yanmt:Roles:AdminGroups` | empty | Groups with full access: `CONTOSO\YANMT-Admins`, `YANMT-Admins` or `.\YANMT-Admins` (local), or a SID. Double each backslash in JSON (section 3.5). |
 | `Yanmt:Roles:ViewerGroups` | empty | Groups with read-only access. |
 | `Yanmt:Logging:MaxFileSizeBytes` | `10485760` | Log file size before rolling. |
 | `Yanmt:Logging:RetainedFileCount` | `30` | Log files kept. |
@@ -361,7 +532,7 @@ The startup log names the settings that came from the registry.
 Data retention (raw samples, rollups, events, config versions) and the other runtime settings are
 changed in the web UI under *Settings*, not in `appsettings.json`.
 
-Example (domain groups; see section 2.5 for local groups):
+Example (domain groups; see section 3.5 for local groups):
 
 ```json
 {
@@ -372,7 +543,7 @@ Example (domain groups; see section 2.5 for local groups):
 }
 ```
 
-## 5. Backup and restore
+## 6. Backup and restore
 
 ### What to back up
 
@@ -408,8 +579,8 @@ $bk = '\\backup-host\yanmt\20261110'   # the backup folder to restore
 Stop-Service YANMT
 Rename-Item $data "$data.before-restore"
 Copy-Item $bk $data -Recurse
-# Re-apply the data folder ACL: a copied folder inherits the parent's permissions, not section 2.3's.
-# No /T on the first line (it would leave every restored file with an empty DACL, see section 2.3).
+# Re-apply the data folder ACL: a copied folder inherits the parent's permissions, not section 3.3's.
+# No /T on the first line (it would leave every restored file with an empty DACL, see section 3.3).
 icacls $data /inheritance:r /grant "${account}:(OI)(CI)M" 'BUILTIN\Administrators:(OI)(CI)F' 'NT AUTHORITY\SYSTEM:(OI)(CI)F'
 icacls "$data\*" /reset /T /Q
 icacls "$data\secrets.entropy" /inheritance:r /grant "${account}:M" 'BUILTIN\Administrators:F' 'NT AUTHORITY\SYSTEM:F'
@@ -465,9 +636,10 @@ Other notes for a new server:
 - The ICMP, SNMP and SSH paths from the new server must be allowed by device ACLs and the management firewall.
 - SSH host keys are pinned per node (trust on first use) and stay in the database, so devices keep matching.
   If a device's key legitimately changed, use "Forget" next to the pinned host key in the node's connection tests, then reconnect to pin the new one.
-- Repeat section 2 (certificate, service account, groups, firewall) on the new server.
+- Install on the new server with the MSI (section 1, plus the certificate from section 3.2), or repeat
+  section 3 (certificate, service account, groups, firewall) for a manual install.
 
-## 6. Troubleshooting
+## 7. Troubleshooting
 
 ### The service won't start
 
@@ -498,8 +670,8 @@ What Windows reports:
 
 | Message | Cause and fix |
 | --- | --- |
-| Error 1069, logon failure | The account lacks *Log on as a service*, or the password is wrong. See the end of section 2.6. |
-| "Keyset does not exist" | The service account can't read the certificate's private key. Grant Read (section 2.3, *Certificate private key*) and verify. |
+| Error 1069, logon failure | The account lacks *Log on as a service*, or the password is wrong. See the end of section 3.6. |
+| "Keyset does not exist" | The service account can't read the certificate's private key. Grant Read (section 3.3, *Certificate private key*) and verify. |
 | "Cannot read or create ...secrets.entropy" | See below. |
 | "Yanmt:Https:CertificateThumbprint is not set" | The thumbprint is missing from `$app\appsettings.json`, or (on a hand run) you started the exe from another folder. See below. |
 

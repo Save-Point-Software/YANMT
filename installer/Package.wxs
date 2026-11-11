@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  YANMT MSI (issue #40). Does DEPLOYMENT.md section 2 (except the certificate itself and antivirus
-  exclusions) and section 3. The service runs as the virtual account NT SERVICE\YANMT.
+  YANMT MSI (issue #40). Does DEPLOYMENT.md sections 3 and 4 (except the certificate itself, group members and
+  antivirus exclusions); section 1 documents it. The service runs as the virtual account NT SERVICE\YANMT.
 
   Properties (silent: msiexec /i yanmt-X.Y.Z.msi /qn CERT_THUMBPRINT=... ADMIN_GROUPS="CONTOSO\YANMT-Admins" /l*v install.log):
     PORT                     HTTPS port, default 8443.

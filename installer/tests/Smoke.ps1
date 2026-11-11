@@ -3,7 +3,7 @@
   MSI smoke test for a throwaway Windows machine (GitHub Actions windows-latest). Issue #40.
 
 .DESCRIPTION
-  1. A manual install as the local account svc-yanmt (DEPLOYMENT.md section 2), started once so
+  1. A manual install as the local account svc-yanmt (DEPLOYMENT.md section 3), started once so
      yanmt.db and secrets.entropy exist.
   2. An MSI install with a bad thumbprint: must fail early and change nothing.
   3. MSI install (version 1) over the manual install: replaces the service with NT SERVICE\YANMT,
