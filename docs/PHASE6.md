@@ -69,7 +69,7 @@ otherwise); confirm with `show snmp user`.
       polling works. A wrong passphrase and a tampered file are both refused.
 - [ ] Publish and install the service per DEPLOYMENT.md on a test server: service starts under the
       service account, HTTPS serves the bound certificate, Windows groups map to admin and viewer.
-- [ ] Backup and restore per DEPLOYMENT.md section 5, including the DPAPI caveat on a different server.
+- [ ] Backup and restore per DEPLOYMENT.md section 6, including the DPAPI caveat on a different server.
 
 ## Known follow-ups
 
