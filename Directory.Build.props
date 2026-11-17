@@ -8,5 +8,10 @@
     <Authors>Curtis Sevegney</Authors>
     <Product>YANMT</Product>
     <Copyright>Copyright (c) Curtis Sevegney. MIT License.</Copyright>
+    <!--
+      Dev and manual builds are 0.0.0 (file version 0.0.0.0) instead of the SDK's 1.0.0, so a release MSI
+      (built with -p:Version=X.Y.Z) always has a higher file version than a hand-published yanmt.exe (issue #47).
+    -->
+    <VersionPrefix>0.0.0</VersionPrefix>
   </PropertyGroup>
 </Project>

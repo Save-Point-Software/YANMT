@@ -4,10 +4,12 @@
 
 .DESCRIPTION
   1. A manual install as the local account svc-yanmt (DEPLOYMENT.md section 3), started once so
-     yanmt.db and secrets.entropy exist.
+     yanmt.db and secrets.entropy exist. Its yanmt.exe comes from -LegacyPublishDir, a build with a
+     higher file version than the MSI's (issue #47: the MSI then skipped its service component).
   2. An MSI install with a bad thumbprint: must fail early and change nothing.
   3. MSI install (version 1) over the manual install: replaces the service with NT SERVICE\YANMT,
-     re-grants folders and the key, creates the local groups, keeps the hand-edited appsettings.json.
+     re-grants folders and the key, creates the local groups, keeps the hand-edited appsettings.json,
+     replaces the newer-versioned yanmt.exe, and covers all firewall profiles.
   2b. A custom Yanmt:DataPath (appsettings.json, or a machine environment variable): refused early.
   4. Upgrade to version 2 with no properties: settings read back from the registry, database
      backed up, hand-edited appsettings.json kept.
@@ -23,6 +25,8 @@ param(
     [Parameter(Mandatory)] [string] $Msi1,
     [Parameter(Mandatory)] [string] $Msi2,
     [Parameter(Mandatory)] [string] $PublishDir,
+    # The manual install's files: the same app published with a higher version than the MSIs' yanmt.exe.
+    [Parameter(Mandatory)] [string] $LegacyPublishDir,
     [string] $LogDir = (Join-Path $PWD 'smoke-logs')
 )
 
@@ -32,6 +36,7 @@ Set-StrictMode -Version Latest
 $Msi1 = (Resolve-Path $Msi1).Path
 $Msi2 = (Resolve-Path $Msi2).Path
 $PublishDir = (Resolve-Path $PublishDir).Path
+$LegacyPublishDir = (Resolve-Path $LegacyPublishDir).Path
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
 $app = Join-Path $env:ProgramFiles 'YANMT'
@@ -186,7 +191,12 @@ try {
     Write-Host "Log on as a service: $((Get-Content $inf) -like 'SeServiceLogonRight*')  (svc-yanmt is *$userSid)"
 
     New-Item -ItemType Directory -Force -Path $app, $data | Out-Null
-    Copy-Item (Join-Path $PublishDir '*') -Destination $app -Recurse -Force
+    Copy-Item (Join-Path $LegacyPublishDir '*') -Destination $app -Recurse -Force
+    $msiExe = Get-Item (Join-Path $PublishDir 'yanmt.exe')
+    $legacyVersion = [version](Get-Item "$app\yanmt.exe").VersionInfo.FileVersion
+    $msiVersion = [version]$msiExe.VersionInfo.FileVersion
+    Write-Host "Manual yanmt.exe $legacyVersion, MSI yanmt.exe $msiVersion"
+    if ($legacyVersion -le $msiVersion) { throw "The manual install's yanmt.exe ($legacyVersion) must be newer than the MSI's ($msiVersion)." }
 
     $settings = Get-Content (Join-Path $app 'appsettings.json') -Raw | ConvertFrom-Json
     $settings.Yanmt.Https.CertificateThumbprint = $thumb
@@ -260,6 +270,12 @@ try {
     Check (Wait-Until { (Get-Service YANMT).Status -eq 'Running' } 60) 'install v1: service is running'
     Check (Wait-Until { (Get-HttpStatus) -eq '401' } 60) "install v1: HTTPS on $port answers 401 (got $(Get-HttpStatus))"
     Check ($svc.StartMode -eq 'Auto') 'install v1: automatic start'
+    $installed = Get-Item "$app\yanmt.exe"
+    Check ($installed.VersionInfo.FileVersion -eq $msiExe.VersionInfo.FileVersion -and
+        (Get-FileHash $installed.FullName).Hash -eq (Get-FileHash $msiExe.FullName).Hash) "install v1: the newer manual yanmt.exe was replaced by the MSI's (got $($installed.VersionInfo.FileVersion))"
+    $v1log = Join-Path $LogDir 'install-v1.log'
+    Check (-not (Select-String -Path $v1log -Pattern 'Disallowing installation of component' -Quiet)) 'install v1: no component skipped for a newer key file'
+    Check ((Select-String -Path $v1log -Pattern 'YANMT: the YANMT service exists, runs as NT SERVICE\\YANMT' -Quiet)) 'install v1: VerifyYanmtService checked the service'
     Check ((sc.exe qfailure YANMT | Out-String) -match 'RESTART -- Delay = 60000') 'install v1: failure actions restart after 60 s'
 
     $dataAcl = Get-Acl $data
@@ -275,10 +291,13 @@ try {
     $rule = Get-Rule
     Check ($null -ne $rule) 'firewall rule exists'
     if ($rule) {
-        Check ("$($rule.Profile)" -eq 'Domain, Private') "firewall rule: Domain and Private only (got $($rule.Profile))"
+        Check ((([int]$rule.Profile) -band 7) -eq 7) "firewall rule: Domain, Private and Public (got $($rule.Profile))"
         Check ((($rule | Get-NetFirewallPortFilter).LocalPort) -eq "$port") 'firewall rule: TCP port'
         Check ((($rule | Get-NetFirewallAddressFilter).RemoteAddress -join ',') -match '^192\.0\.2\.0/') "firewall rule: remote address $remote"
     }
+    # The runner's firewall may be off; then there is nothing to cover. Either way, no warning.
+    $fwLine = Select-String -Path $v1log -Pattern 'YANMT( WARNING)?: (firewall|could not read the firewall)' | Select-Object -Last 1
+    Check ("$fwLine" -match 'YANMT: firewall: (the active profile\(s\) .* are covered|off for the active)') "install v1: the log says the active firewall profile is covered ($fwLine)"
 
     $reg = Get-Settings
     Check ($reg.Port -eq "$port" -and $reg.CertificateThumbprint -eq $thumb -and $reg.AdminGroups -eq '.\YANMT-Admins' -and $reg.ViewerGroups -eq '.\YANMT-Viewers') 'registry: settings written (thumbprint without spaces)'

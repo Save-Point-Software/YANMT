@@ -57,6 +57,20 @@ public static class SettingsActions
             return ActionResult.Failure;
         }
 
+        // Costing is done (CostFinalize), so Windows Installer has decided whether YanmtService installs. On a
+        // new install or upgrade it must: if a newer yanmt.exe is already there (file versioning), the component,
+        // and so the service, would be skipped silently while RemoveLegacyService deletes the old one (issue #47).
+        // A legacy install gets REINSTALLMODE=amus (Package.wxs), so this is the safety net. Nothing has changed yet.
+        if (!session.EvaluateCondition("Installed") && !session.EvaluateCondition("$YanmtService = 3"))
+        {
+            var existing = System.IO.Path.Combine(session["INSTALLFOLDER"], "yanmt.exe");
+            var version = System.IO.File.Exists(existing) ? System.Diagnostics.FileVersionInfo.GetVersionInfo(existing).FileVersion : "none";
+            session.Log($"YANMT: the YanmtService component would not be installed (existing {existing}, file version {version}).");
+            Fail(session, $"Windows Installer would not install yanmt.exe or the YANMT service: {existing} (file version {version}) " +
+                "is newer than the one in this package. Nothing was changed. Remove that file (stop the service first) and run the installer again.");
+            return ActionResult.Failure;
+        }
+
         settings.WriteBack(session);
         var installFolder = session["INSTALLFOLDER"];
         var dataFolder = session["DATAFOLDER"];
@@ -74,7 +88,14 @@ public static class SettingsActions
             ["DataFolder"] = dataFolder,
         }.ToString();
         session["GrantKeyRead"] = new CustomActionData { ["Thumbprint"] = settings.Thumbprint }.ToString();
-        session["StartYanmtService"] = new CustomActionData { ["Url"] = url, ["DataFolder"] = dataFolder }.ToString();
+        session["StartYanmtService"] = new CustomActionData
+        {
+            ["Url"] = url,
+            ["DataFolder"] = dataFolder,
+            ["Port"] = settings.Port.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["FirewallRule"] = settings.FirewallRemoteAddress.Length > 0 ? "1" : "",
+        }.ToString();
+        session["VerifyYanmtService"] = new CustomActionData { ["InstallFolder"] = installFolder }.ToString();
 
         var upgrade = session["WIX_UPGRADE_DETECTED"];
         if (!string.IsNullOrEmpty(upgrade))

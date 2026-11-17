@@ -13,8 +13,8 @@ dotnet build installer/Yanmt.Installer.wixproj -c Release -p:ProductVersion=1.2.
 | --- | --- |
 | `Package.wxs` | Files, service (`NT SERVICE\YANMT`), registry settings, firewall rule, event source, upgrade rules, sequencing. |
 | `Ui.wxs` | Dialog flow and the one settings dialog. |
-| `CustomActions/` | C# (.NET Framework 4.8) actions: check settings, back up the database before an upgrade, replace a manual install's service, folder ACLs, certificate key grant, local groups, start the service. |
-| `tests/Smoke.ps1` | CI smoke test: manual install, MSI install over it, upgrade, downgrade refused, uninstall. Only for a throwaway machine. |
+| `CustomActions/` | C# (.NET Framework 4.8) actions: check settings, back up the database before an upgrade, replace a manual install's service, check the service exists, folder ACLs, certificate key grant, local groups, start the service, firewall profile check. |
+| `tests/Smoke.ps1` | CI smoke test: manual install (with a newer-versioned exe), MSI install over it, upgrade, downgrade refused, uninstall. Only for a throwaway machine. |
 
 ## Releases
 

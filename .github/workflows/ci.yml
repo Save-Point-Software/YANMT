@@ -53,6 +53,11 @@ jobs:
       - name: Publish (self-contained single file)
         run: dotnet publish src/Yanmt.Web -c Release -r win-x64 -p:Version=0.0.1 -o publish
 
+      # The smoke test's manual install: the same app with a higher file version (9.9.9.0) than the MSIs'
+      # yanmt.exe (0.0.1.0), as a hand build once had (1.0.0.0, issue #47).
+      - name: Publish the legacy build
+        run: dotnet publish src/Yanmt.Web -c Release -r win-x64 -p:Version=9.9.9 -o publish-legacy
+
       # Two versions of the same build, for the upgrade and downgrade checks. The second is the highest
       # build number a release tag allows (vX.Y.65535), so CI covers that boundary. Each is copied out
       # right away: the second is a Rebuild (WiX's incremental check ignores a changed
@@ -80,6 +85,7 @@ jobs:
           -Msi1 msi/yanmt-0.0.1.msi
           -Msi2 msi/yanmt-0.0.65535.msi
           -PublishDir publish
+          -LegacyPublishDir publish-legacy
           -LogDir smoke-logs
 
       - name: Upload smoke test logs

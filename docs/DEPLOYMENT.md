@@ -99,11 +99,15 @@ What the MSI does:
 - Creates missing local (`.\Name`) groups.
 - Registers the `YANMT` service (automatic start; on failure it restarts after 60 s, three times, and the
   count resets after a day) and the `YANMT` Event Log source in the Application log.
-- If `FIREWALL_REMOTE_ADDRESS` is set, an inbound rule *YANMT web UI* for TCP `PORT`, profiles Domain and
-  Private (never Public), limited to those addresses.
-- Starts the service. **A service that doesn't start does not roll the install back.** The final dialog shows
-  the sign-in URL, or says the service didn't start and points to `C:\ProgramData\YANMT\logs\startup-failure.log`
-  (section 7). A silent install still exits 0; look for `YANMT WARNING` in its log.
+- If `FIREWALL_REMOTE_ADDRESS` is set, an inbound rule *YANMT web UI* for TCP `PORT`, profiles Domain,
+  Private and Public, limited to those addresses. Public is included because a workgroup server's network is
+  often classified Public, and a rule without it silently doesn't apply there.
+- Checks that the `YANMT` service exists and runs as `NT SERVICE\YANMT`; if not, the install fails and rolls back.
+- Starts the service. **A service that doesn't start does not roll the install back.** The final dialog says
+  whether the service is running: it shows the sign-in URL, or says it isn't running and points to
+  `C:\ProgramData\YANMT\logs\startup-failure.log` (section 7). It also warns if the firewall's active profile
+  isn't covered (section 7, *The web UI isn't reachable from other machines*). A silent install still exits 0
+  in both cases; look for `YANMT WARNING` in its log.
 
 Then, by hand: add people to the groups (section 3.4), add the antivirus exclusions (section 3.9), and sign in
 (section 3.8). Other settings (log sizes, polling concurrency, listen address) still go in
@@ -191,8 +195,11 @@ Remove-Item 'C:\ProgramData\YANMT' -Recurse   # database, backups and credential
 Back up first (section 6), then install the MSI as in section 1.3 with the properties. Your
 `appsettings.json` is not read for them. The MSI:
 
+- replaces every file in `C:\Program Files\YANMT` with its own, whatever their version (an older hand build
+  had file version 1.0.0.0, higher than a release's), except `appsettings.json`;
 - stops and deletes the existing `YANMT` service, whatever account it ran as, and creates its own as
-  `NT SERVICE\YANMT`;
+  `NT SERVICE\YANMT`. If Windows Installer wouldn't install the new service, the MSI stops before changing
+  anything instead of deleting the old one;
 - resets the data folder ACL, including existing files and `secrets.entropy`, so the old account's grants
   are gone, and grants the service Read on the certificate key;
 - keeps `appsettings.json`. Its port, certificate and group values are now overridden by the MSI's.
@@ -229,6 +236,9 @@ dotnet publish src/Yanmt.Web -c Release -r win-x64 -o publish
 
 The output is self-contained, single-file, win-x64 and untrimmed. Copy the `publish` folder to the server.
 `appsettings.Development.json` is not included.
+
+Without `-p:Version=X.Y.Z`, the build is version 0.0.0 (file version 0.0.0.0), so any release MSI installed
+later replaces it. Releases are built with their tag's version (`installer/README.md`).
 
 ## 3. Install by hand
 
@@ -470,12 +480,12 @@ Local Security Policy or a GPO (*User Rights Assignment > Log on as a service*).
 $mgmtSubnet = '192.0.2.0/24'   # REPLACE with your management subnet (this is a documentation example)
 
 New-NetFirewallRule -DisplayName 'YANMT web UI' -Direction Inbound -Protocol TCP -LocalPort 8443 `
-    -Action Allow -Profile Domain,Private -RemoteAddress $mgmtSubnet
+    -Action Allow -Profile Domain,Private,Public -RemoteAddress $mgmtSubnet
 ```
 
-`-Profile Domain,Private` matters on servers that aren't domain-joined: their network is usually classified
-as Private (or Public), so a rule limited to `Domain` never matches and the UI is unreachable from other
-machines. Check the profile with `Get-NetConnectionProfile`. Don't add `Public`.
+All three profiles, as the MSI does: a server that isn't domain-joined usually has its network classified as
+Private or Public, and a rule without that profile never matches, so the UI is unreachable from other
+machines. `-RemoteAddress` is what limits who can connect. Check the profile with `Get-NetConnectionProfile`.
 
 Use the port from `Yanmt:Https:Port`. YANMT's outbound traffic needs ICMP echo, UDP 161 (SNMP) and TCP 22
 (SSH) to the devices.
@@ -704,6 +714,37 @@ What Windows reports:
 | "Keyset does not exist" | The service account can't read the certificate's private key. Grant Read (section 3.3, *Certificate private key*) and verify. |
 | "Cannot read or create ...secrets.entropy" | See below. |
 | "Yanmt:Https:CertificateThumbprint is not set" | The thumbprint is missing from `$app\appsettings.json`, or (on a hand run) you started the exe from another folder. See below. |
+
+### The web UI isn't reachable from other machines
+
+It works on the server itself (`https://localhost:8443/`) but not from your workstation. Usually the firewall:
+
+```powershell
+Get-NetConnectionProfile | Format-Table Name, InterfaceAlias, NetworkCategory   # the active profile
+Get-NetFirewallProfile | Format-Table Name, Enabled, DefaultInboundAction
+Get-NetFirewallRule -DisplayName 'YANMT web UI' | Format-Table DisplayName, Enabled, Profile, Direction, Action
+Get-NetFirewallRule -DisplayName 'YANMT web UI' | Get-NetFirewallAddressFilter | Format-Table RemoteAddress
+```
+
+- **No rule:** the MSI creates one only with `FIREWALL_REMOTE_ADDRESS` (section 1.4 to add it).
+- **The rule's `Profile` doesn't include the active `NetworkCategory`:** the 0.9.0 MSI and older versions of
+  section 3.7 made a rule for Domain and Private only, and a workgroup server is often Public. Upgrading to a
+  newer MSI recreates the rule with all profiles. For a manual rule:
+  `Set-NetFirewallRule -DisplayName 'YANMT web UI' -Profile Domain,Private,Public`.
+- **Your workstation's address isn't in `RemoteAddress`:** fix the scope the same way.
+- **Group Policy:** if a GPO sets *Apply local firewall rules: No*, local rules (including the MSI's) are
+  ignored; allow TCP `PORT` in the GPO. The installer warns about this too.
+
+The installer checks this at the end and warns on the final dialog, and as `YANMT WARNING: firewall:` in a
+silent install's log.
+
+### "The YANMT service was not created" (installer)
+
+The install failed and rolled back because Windows Installer didn't create the service. Search the log for
+`YANMT` and `Disallowing installation of component`. A related early error, "Windows Installer would not install
+yanmt.exe or the YANMT service", means `C:\Program Files\YANMT\yanmt.exe` has a higher file version than the
+MSI's and the installer couldn't replace it; nothing was changed. Stop the service, delete that file, and run
+the MSI again.
 
 ### Running yanmt.exe by hand
 
