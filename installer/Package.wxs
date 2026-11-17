@@ -8,7 +8,7 @@
     CERT_THUMBPRINT          Required. In LocalMachine\My, with a private key. Spaces are ignored.
     ADMIN_GROUPS             Required. ';'-separated, same forms as Yanmt:Roles:AdminGroups. Missing .\Name groups are created.
     VIEWER_GROUPS            Optional, same forms.
-    FIREWALL_REMOTE_ADDRESS  Optional. Remote address scope of the inbound rule; empty = no rule.
+    FIREWALL_REMOTE_ADDRESS  Optional. Remote address scope of the inbound rule (all profiles); empty = no rule.
   Upgrade and repair read them back from HKLM\SOFTWARE\YANMT; a value on the command line wins.
   An empty value can't be told apart from "not given", so clearing an optional setting is explicit:
     CLEAR_VIEWER_GROUPS=1             remove the stored viewer groups (appsettings.json is then in charge, as in a manual install).
@@ -89,8 +89,33 @@
     <SetProperty Id="REINSTALL" Action="YanmtReinstall" Value="ALL" Before="CostInitialize" Sequence="execute"
                  Condition="Installed AND NOT REMOVE AND NOT REINSTALL AND NOT PATCH" />
 
-    <!-- Firewall profiles Domain (1) + Private (2), never Public. -->
-    <Property Id="YANMT_FW_PROFILE" Value="3" />
+    <!--
+      A legacy (manual, non-MSI) install: a YANMT service or a yanmt.exe in Program Files\YANMT, and no YANMT MSI.
+      Its files may have any version (a hand build was 1.0.0.0 before issue #47), and Windows Installer skips a
+      component whose key file on disk is newer, which once left no service at all. So for a legacy install every
+      file is replaced regardless of version (REINSTALLMODE "a"); appsettings.json is kept (NeverOverwrite).
+      PrepareInstall refuses any new install where YanmtService still wouldn't be installed.
+    -->
+    <Property Id="YANMT_LEGACY_SERVICE" Secure="yes">
+      <RegistrySearch Id="LegacyServiceSearch" Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\YANMT" Name="ImagePath" Type="raw" Bitness="always64" />
+    </Property>
+    <Property Id="YANMT_LEGACY_EXE" Secure="yes">
+      <DirectorySearch Id="LegacyFolderSearch" Path="[ProgramFiles64Folder]YANMT" Depth="0">
+        <FileSearch Id="LegacyExeSearch" Name="yanmt.exe" />
+      </DirectorySearch>
+    </Property>
+    <SetProperty Id="YANMT_LEGACY" Action="YanmtDetectLegacy" Value="1" After="AppSearch" Sequence="both"
+                 Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED AND (YANMT_LEGACY_SERVICE OR YANMT_LEGACY_EXE)" />
+    <SetProperty Id="REINSTALLMODE" Action="YanmtForceLegacyFiles" Value="amus" Before="CostInitialize" Sequence="execute"
+                 Condition="YANMT_LEGACY" />
+
+    <!--
+      Firewall profiles Domain (1) + Private (2) + Public (4). A workgroup server's network is often Public, and a
+      rule without it silently doesn't apply there (issue #47). The rule exists only with FIREWALL_REMOTE_ADDRESS,
+      so it is always limited to those addresses. StartYanmtService and the final dialog warn if the active
+      profile still isn't covered (Group Policy, a disabled rule).
+    -->
+    <Property Id="YANMT_FW_PROFILE" Value="7" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="YANMT" />
@@ -114,6 +139,7 @@
     <CustomAction Id="PrepareInstall" BinaryRef="YanmtCA" DllEntry="PrepareInstall" Execute="immediate" Return="check" />
     <CustomAction Id="BackupBeforeUpgrade" BinaryRef="YanmtCA" DllEntry="BackupBeforeUpgrade" Execute="deferred" Impersonate="no" Return="check" />
     <CustomAction Id="RemoveLegacyService" BinaryRef="YanmtCA" DllEntry="RemoveLegacyService" Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="VerifyYanmtService" BinaryRef="YanmtCA" DllEntry="VerifyYanmtService" Execute="deferred" Impersonate="no" Return="check" />
     <CustomAction Id="SetFolderAcls" BinaryRef="YanmtCA" DllEntry="SetFolderAcls" Execute="deferred" Impersonate="no" Return="check" />
     <CustomAction Id="GrantKeyRead" BinaryRef="YanmtCA" DllEntry="GrantKeyRead" Execute="deferred" Impersonate="no" Return="check" />
     <CustomAction Id="CreateLocalGroups" BinaryRef="YanmtCA" DllEntry="CreateLocalGroups" Execute="deferred" Impersonate="no" Return="check" />
@@ -126,7 +152,9 @@
       <Custom Action="PrepareInstall" After="CostFinalize" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
       <RemoveExistingProducts After="InstallInitialize" />
       <Custom Action="BackupBeforeUpgrade" After="RemoveExistingProducts" Condition="WIX_UPGRADE_DETECTED AND NOT (REMOVE~=&quot;ALL&quot;)" />
-      <Custom Action="RemoveLegacyService" After="StopServices" Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED AND NOT (REMOVE~=&quot;ALL&quot;)" />
+      <!-- Only when the new ServiceInstall will run ($YanmtService = 3, installed locally). -->
+      <Custom Action="RemoveLegacyService" After="StopServices" Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED AND NOT (REMOVE~=&quot;ALL&quot;) AND $YanmtService = 3" />
+      <Custom Action="VerifyYanmtService" After="InstallServices" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
       <Custom Action="SetFolderAcls" After="StartServices" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
       <Custom Action="GrantKeyRead" After="SetFolderAcls" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
       <Custom Action="CreateLocalGroups" After="GrantKeyRead" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />

@@ -21,6 +21,8 @@ public static class ServiceActions
     /// Deferred, fresh installs only (this MSI isn't installed and isn't upgrading itself). A YANMT service
     /// that exists now was created by hand (DEPLOYMENT.md "Manual install", usually as svc-yanmt): stop it,
     /// wait, and delete it before InstallServices creates the MSI's own. The svc-yanmt account is left alone.
+    /// Scheduled only when the YanmtService component (and so its ServiceInstall) will be installed, and
+    /// PrepareInstall has already refused the install otherwise: never leave the machine with no service (issue #47).
     /// </summary>
     [CustomAction]
     public static ActionResult RemoveLegacyService(Session session)
@@ -56,6 +58,36 @@ public static class ServiceActions
         }
 
         session.Log("YANMT: deleted the old YANMT service.");
+        return ActionResult.Success;
+    }
+
+    /// <summary>
+    /// Deferred, right after InstallServices, on install, upgrade, change and repair. The YANMT service must
+    /// exist, run as NT SERVICE\YANMT and point at the installed yanmt.exe. Otherwise the install fails and
+    /// rolls back instead of reporting success with no service (issue #47: a skipped YanmtService component).
+    /// </summary>
+    [CustomAction]
+    public static ActionResult VerifyYanmtService(Session session)
+    {
+        var expected = Path.Combine(session.CustomActionData["InstallFolder"], "yanmt.exe");
+        using var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\" + ServiceIdentity.ServiceName);
+        if (!Exists() || key is null)
+        {
+            return Fail(session, "The YANMT service was not created, so the installation is rolled back. Search the install log " +
+                "for \"YANMT\" and \"Disallowing installation of component\". A manual install's service that this installer " +
+                "already deleted is not restored: run the installer again once the cause is fixed, or recreate it (DEPLOYMENT.md section 3.6).");
+        }
+
+        var account = key.GetValue("ObjectName") as string ?? "";
+        var image = (key.GetValue("ImagePath", "", RegistryValueOptions.DoNotExpandEnvironmentNames) as string ?? "").Trim().Trim('"');
+        if (!string.Equals(account, ServiceIdentity.Account, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(Path.GetFullPath(image), Path.GetFullPath(expected), StringComparison.OrdinalIgnoreCase))
+        {
+            return Fail(session, $"The YANMT service is not the one this installer creates: it runs as '{account}' from '{image}', " +
+                $"expected '{ServiceIdentity.Account}' from '{expected}'. The installation is rolled back.");
+        }
+
+        session.Log($"YANMT: the YANMT service exists, runs as {account} from {image}.");
         return ActionResult.Success;
     }
 
@@ -141,31 +173,67 @@ public static class ServiceActions
                 $"See {Path.Combine(data["DataFolder"], "logs", "startup-failure.log")} and DEPLOYMENT.md, Troubleshooting.");
         }
 
+        // Logged only ("YANMT WARNING: firewall: ..."); the final dialog checks again (ReportServiceState).
+        FirewallCheck.Check(session, int.Parse(data["Port"], System.Globalization.CultureInfo.InvariantCulture), data["FirewallRule"] == "1");
         return ActionResult.Success;
     }
 
     /// <summary>
-    /// Immediate, UI sequence after ExecuteAction: sets the final dialog's text. Reads the service state
-    /// only, which needs no elevation.
+    /// Immediate, UI sequence after ExecuteAction: sets the final dialog's text, which always says whether
+    /// the service is running, plus a firewall warning if the active profile isn't covered. Reads state only,
+    /// which needs no elevation.
     /// </summary>
     [CustomAction]
     public static ActionResult ReportServiceState(Session session)
     {
+        string text;
         try
         {
-            var url = $"https://{System.Net.Dns.GetHostEntry(Environment.MachineName).HostName}:{session["PORT"]}/";
             using var service = new ServiceController(ServiceIdentity.ServiceName);
-            session["WIXUI_EXITDIALOGOPTIONALTEXT"] = service.Status == ServiceControllerStatus.Running
-                ? $"The YANMT service is running. Sign in at {url}"
-                : "The YANMT service did not start. The reason is in " +
-                  Path.Combine(session["DATAFOLDER"], "logs", "startup-failure.log") + ".";
+            ServiceControllerStatus? status;
+            try
+            {
+                status = service.Status;
+            }
+            catch (InvalidOperationException)
+            {
+                status = null;   // No such service.
+            }
+
+            text = status switch
+            {
+                ServiceControllerStatus.Running => $"The YANMT service is running. Sign in at https://{HostName()}:{session["PORT"]}/",
+                null => "The YANMT service is NOT installed. See the installation log.",
+                _ => $"The YANMT service is installed but NOT running ({status}). The reason is in " +
+                     Path.Combine(session["DATAFOLDER"], "logs", "startup-failure.log") + ".",
+            };
         }
         catch (Exception ex)
         {
             session.Log("YANMT: could not read the service state: " + ex.Message);
+            text = "Could not read the state of the YANMT service: " + ex.Message;
         }
 
+        var port = int.TryParse(session["PORT"], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var p) ? p : 0;
+        if (FirewallCheck.Check(session, port, !string.IsNullOrEmpty(session["FIREWALL_REMOTE_ADDRESS"])) is { } warning)
+        {
+            text += "\r\n\r\nFirewall: " + warning;
+        }
+
+        session["WIXUI_EXITDIALOGOPTIONALTEXT"] = text;
         return ActionResult.Success;
+    }
+
+    private static string HostName()
+    {
+        try
+        {
+            return System.Net.Dns.GetHostEntry(Environment.MachineName).HostName;
+        }
+        catch (Exception)
+        {
+            return Environment.MachineName;
+        }
     }
 
     private static bool Exists() =>
