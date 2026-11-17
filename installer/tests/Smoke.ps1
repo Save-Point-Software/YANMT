@@ -274,7 +274,8 @@ try {
     Check ($installed.VersionInfo.FileVersion -eq $msiExe.VersionInfo.FileVersion -and
         (Get-FileHash $installed.FullName).Hash -eq (Get-FileHash $msiExe.FullName).Hash) "install v1: the newer manual yanmt.exe was replaced by the MSI's (got $($installed.VersionInfo.FileVersion))"
     $v1log = Join-Path $LogDir 'install-v1.log'
-    Check (-not (Select-String -Path $v1log -Pattern 'Disallowing installation of component' -Quiet)) 'install v1: no component skipped for a newer key file'
+    Check (-not (Select-String -Path $v1log -Pattern 'Disallowing installation of component.*higher versioned keyfile' -Quiet)) 'install v1: no component skipped for a newer key file'
+    Check ((Select-String -Path $v1log -Pattern 'Component: YanmtService;.*Action: Local' -Quiet)) 'install v1: YanmtService component installed'
     Check ((Select-String -Path $v1log -Pattern 'YANMT: the YANMT service exists, runs as NT SERVICE\\YANMT' -Quiet)) 'install v1: VerifyYanmtService checked the service'
     Check ((sc.exe qfailure YANMT | Out-String) -match 'RESTART -- Delay = 60000') 'install v1: failure actions restart after 60 s'
 
