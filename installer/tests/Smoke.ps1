@@ -16,6 +16,10 @@
   4b/c. Change: clear the viewer groups and the firewall scope, then set them again.
   5. Version 1 again: refused (downgrade).
   6. Uninstall: service, firewall rule, event source, install folder and registry key gone; data kept.
+  7. CREATE_SELF_SIGNED_CERT=1 (issue #49): with CERT_THUMBPRINT too it's refused; alone it creates one certificate
+     (SAN, non-exportable RSA 3072, key readable by NT SERVICE\YANMT) that HTTPS presents. A repair, and /i again
+     with CREATE_SELF_SIGNED_CERT=1, create no second one. Then uninstall (the certificate stays).
+  8. A self-signed install that rolls back (WIXFAILWHENDEFERRED=1) leaves no certificate behind.
 
   It creates a self-signed certificate, a local user and local groups, and changes the firewall.
   Never run it on a real server. No YANMT polling is configured and no device is contacted.
@@ -141,6 +145,20 @@ function Get-InstallerSettingsLines {
     }
     return @($lines | Where-Object { $_ -like '*Installer settings from HKLM*' })
 }
+
+# The certificate HTTPS on $port presents (Kestrel serves one certificate, whatever the SNI name).
+function Get-ServedThumbprint {
+    try {
+        $tcp = [System.Net.Sockets.TcpClient]::new('localhost', $port)
+        try {
+            $ssl = [System.Net.Security.SslStream]::new($tcp.GetStream(), $false, { param($s, $c, $ch, $e) $true })
+            $ssl.AuthenticateAsClient('localhost')
+            return [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($ssl.RemoteCertificate).Thumbprint
+        } finally { $tcp.Dispose() }
+    } catch { return "error: $($_.Exception.Message)" }
+}
+
+function Get-SelfSigned { @(Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.FriendlyName -eq 'YANMT (self-signed)' }) }
 
 function Get-Products {
     @(Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
@@ -277,6 +295,9 @@ try {
     Check (-not (Select-String -Path $v1log -Pattern 'Disallowing installation of component.*higher versioned keyfile' -Quiet)) 'install v1: no component skipped for a newer key file'
     Check ((Select-String -Path $v1log -Pattern 'Component: YanmtService;.*Action: Local' -Quiet)) 'install v1: YanmtService component installed'
     Check ((Select-String -Path $v1log -Pattern 'YANMT: the YANMT service exists, runs as NT SERVICE\\YANMT' -Quiet)) 'install v1: VerifyYanmtService checked the service'
+    Check ((Select-String -Path $v1log -Pattern 'YANMT: legacy install detected: replacing all files regardless of version' -Quiet)) 'install v1: the log says a legacy install was detected'
+    $okLines = @(Select-String -Path $v1log -Pattern 'YANMT: settings OK')
+    Check ($okLines.Count -eq 1 -and "$($okLines[0].Line)" -match 'admin groups \[\.\\YANMT-Admins\], viewer groups \[\.\\YANMT-Viewers\], firewall remote address \[192\.0\.2\.0/24\]') "install v1: one 'settings OK' line, with the given values ($(($okLines | ForEach-Object Line) -join ' / '))"
     Check ((sc.exe qfailure YANMT | Out-String) -match 'RESTART -- Delay = 60000') 'install v1: failure actions restart after 60 s'
 
     $dataAcl = Get-Acl $data
@@ -369,6 +390,67 @@ try {
     Check (-not (Test-Path $app)) "uninstall: install folder removed ($((Get-ChildItem $app -Recurse -ErrorAction SilentlyContinue | ForEach-Object FullName) -join ', '))"
     Check ((Test-Path "$data\yanmt.db") -and (Test-Path "$data\secrets.entropy") -and (Test-Path "$data\backups\pre-upgrade")) 'uninstall: data folder kept'
     Check (@(Get-Products).Count -eq 0) 'uninstall: no YANMT product left'
+
+    # --------------------------------------------------------------------------------------------
+    Step '7. Self-signed certificate (CREATE_SELF_SIGNED_CERT=1)'
+    Check (@(Get-SelfSigned).Count -eq 0) 'self-signed: no YANMT certificate yet (precondition)'
+    $code = Invoke-Msi 'self-signed-both.log' @('/i', $Msi2, "CERT_THUMBPRINT=$thumb", 'CREATE_SELF_SIGNED_CERT=1', 'ADMIN_GROUPS=.\YANMT-Admins')
+    Check ($code -eq 1603) "self-signed with CERT_THUMBPRINT too: refused (got $code)"
+    Check ((Select-String -Path (Join-Path $LogDir 'self-signed-both.log') -Pattern 'not both' -Quiet)) 'self-signed with CERT_THUMBPRINT too: the log says why'
+    Check (@(Get-SelfSigned).Count -eq 0 -and @(Get-Products).Count -eq 0) 'self-signed with CERT_THUMBPRINT too: nothing created or installed'
+
+    $code = Invoke-Msi 'self-signed.log' @('/i', $Msi2, 'CREATE_SELF_SIGNED_CERT=1', 'ADMIN_GROUPS=.\YANMT-Admins', "PORT=$port")
+    Check ($code -eq 0) "self-signed install: exit code 0 (got $code)"
+    $created = @(Get-SelfSigned)
+    Check ($created.Count -eq 1) "self-signed install: exactly one certificate 'YANMT (self-signed)' in LocalMachine\My (got $($created.Count))"
+    if ($created.Count -ge 1) {
+        $ss = $created[0]
+        $ipProps = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties()
+        $fqdn = if ($ipProps.DomainName) { "$($ipProps.HostName).$($ipProps.DomainName)" } else { $ipProps.HostName }
+        $san = @($ss.DnsNameList | ForEach-Object { $_.Unicode })
+        Check (($san -contains $env:COMPUTERNAME) -and ($san -contains $fqdn)) "self-signed: SAN has $env:COMPUTERNAME and $fqdn (got $($san -join ', '))"
+        Check ($ss.HasPrivateKey) 'self-signed: has its private key'
+        $eku = @($ss.EnhancedKeyUsageList | ForEach-Object { $_.ObjectId })
+        Check ($eku -contains '1.3.6.1.5.5.7.3.1') "self-signed: Server Authentication EKU (got $($eku -join ', '))"
+        $years = ($ss.NotAfter - $ss.NotBefore).TotalDays / 365.25
+        Check ($years -gt 1.99 -and $years -lt 2.01) "self-signed: valid for two years ($($ss.NotBefore) to $($ss.NotAfter))"
+        $ssKey = (Get-KeyDescriptor $ss).Key
+        Check ($ssKey.KeySize -eq 3072) "self-signed: RSA 3072 (got $($ssKey.KeySize))"
+        Check ($ssKey.ExportPolicy -eq [System.Security.Cryptography.CngExportPolicies]::None) "self-signed: private key not exportable (got $($ssKey.ExportPolicy))"
+        Check ($ssKey.IsMachineKey) 'self-signed: machine key'
+        Check (Test-KeyRead $ss $serviceSid) 'self-signed: NT SERVICE\YANMT can read the private key'
+        Check ((Get-Setting 'CertificateThumbprint') -eq $ss.Thumbprint) "self-signed: its thumbprint is stored (got '$(Get-Setting 'CertificateThumbprint')')"
+        Check (Wait-Until { (Get-Service YANMT).Status -eq 'Running' } 60) 'self-signed: service is running'
+        Check (Wait-Until { (Get-ServedThumbprint) -eq $ss.Thumbprint } 60) "self-signed: HTTPS on $port presents that certificate (got $(Get-ServedThumbprint))"
+        Check (Wait-Until { (Get-HttpStatus) -eq '401' } 60) "self-signed: HTTPS answers 401 (got $(Get-HttpStatus))"
+
+        Step '7b. Repair, and /i again with CREATE_SELF_SIGNED_CERT=1: no second certificate'
+        $code = Invoke-Msi 'self-signed-repair.log' @('/fa', $Msi2)
+        Check ($code -eq 0) "repair: exit code 0 (got $code)"
+        $code = Invoke-Msi 'self-signed-again.log' @('/i', $Msi2, 'CREATE_SELF_SIGNED_CERT=1')
+        Check ($code -eq 0) "/i again with CREATE_SELF_SIGNED_CERT=1: exit code 0 (got $code)"
+        Check ((Select-String -Path (Join-Path $LogDir 'self-signed-again.log') -Pattern 'CREATE_SELF_SIGNED_CERT=1 ignored' -Quiet)) '/i again: the log says CREATE_SELF_SIGNED_CERT=1 was ignored'
+        $after = @(Get-SelfSigned)
+        Check ($after.Count -eq 1 -and $after[0].Thumbprint -eq $ss.Thumbprint) "repair and /i again: still the one certificate (got $(($after | ForEach-Object Thumbprint) -join ', '))"
+        Check ((Get-Setting 'CertificateThumbprint') -eq $ss.Thumbprint) 'repair and /i again: the stored thumbprint is unchanged'
+        Check (Wait-Until { (Get-ServedThumbprint) -eq $ss.Thumbprint } 60) 'repair and /i again: HTTPS still presents it'
+    }
+
+    $code = Invoke-Msi 'self-signed-uninstall.log' @('/x', $Msi2)
+    Check ($code -eq 0) "self-signed uninstall: exit code 0 (got $code)"
+    Check (@(Get-SelfSigned).Count -eq 1) 'self-signed uninstall: the certificate is kept'
+
+    # --------------------------------------------------------------------------------------------
+    Step '8. A self-signed install that rolls back removes its certificate'
+    $before = @(Get-SelfSigned | ForEach-Object Thumbprint)
+    $code = Invoke-Msi 'self-signed-rollback.log' @('/i', $Msi2, 'CREATE_SELF_SIGNED_CERT=1', 'ADMIN_GROUPS=.\YANMT-Admins', 'WIXFAILWHENDEFERRED=1')
+    Check ($code -eq 1603) "rollback: msiexec fails (got $code)"
+    $rbLog = Join-Path $LogDir 'self-signed-rollback.log'
+    Check ((Select-String -Path $rbLog -Pattern 'YANMT: created the self-signed certificate' -Quiet)) 'rollback: the certificate was created before the failure'
+    Check ((Select-String -Path $rbLog -Pattern 'YANMT: rollback: removed the self-signed certificate' -Quiet)) 'rollback: the log says it was removed'
+    $left = @(Get-SelfSigned | ForEach-Object Thumbprint | Where-Object { $before -notcontains $_ })
+    Check ($left.Count -eq 0) "rollback: no new certificate left ($($left -join ', '))"
+    Check (@(Get-Products).Count -eq 0) 'rollback: nothing installed'
 }
 catch {
     Write-Host "ERROR  $_" -ForegroundColor Red

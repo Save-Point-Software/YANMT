@@ -17,24 +17,26 @@ Run every command below from the same elevated PowerShell prompt; later steps re
 
 ## 1. Install with the MSI
 
-The MSI does everything in sections 3 and 4 except three things, which stay manual: the certificate itself,
-adding people to the groups, and antivirus exclusions. It never contacts a device.
+The MSI does everything in sections 3 and 4 except three things, which stay manual: a CA-issued certificate
+(for a test or lab server it can create a self-signed one), adding people to the groups, and antivirus
+exclusions. It never contacts a device.
 
 ### 1.1 Before you install
 
-1. **Download** `yanmt-X.Y.Z.msi` and `SHA256SUMS.txt` from the GitHub release, and check the hash:
-
-   ```powershell
-   Get-FileHash .\yanmt-1.2.3.msi -Algorithm SHA256      # must match the line in SHA256SUMS.txt
-   Unblock-File .\yanmt-1.2.3.msi
-   ```
+1. **Download** the release asset `yanmt-X.Y.Z.msi` (for example `yanmt-1.2.3.msi`) and `SHA256SUMS.txt`
+   from the GitHub release into one folder. Section 1.3 checks the hash, unblocks and installs it.
 
    The MSI is **not code-signed** yet. Windows marks the download as coming from the internet, and
-   SmartScreen may show "Windows protected your PC" (*More info > Run anyway*). `Unblock-File` clears the
-   mark once you have checked the hash.
-2. **Certificate:** put it in `LocalMachine\My` with its private key (section 3.2) and note the thumbprint.
-   The MSI never creates one. It checks that the certificate exists and has a private key, and it grants the
-   service Read on that key.
+   SmartScreen may show "Windows protected your PC" when you open it from Explorer: click *More info >
+   Run anyway*. `Unblock-File` (section 1.3) clears the mark once the hash is checked.
+2. **Certificate:** put a CA-issued certificate in `LocalMachine\My` with its private key (section 3.2). The
+   dialog lists the certificates there that have a private key and aren't expired (name, expiry date,
+   thumbprint); pick one. For a test or lab server, choose *Create a self-signed certificate for this server*
+   instead (`CREATE_SELF_SIGNED_CERT=1` silently): RSA 3072 with a non-exportable key, Server Authentication,
+   the computer name and FQDN as DNS names, valid for two years, friendly name *YANMT (self-signed)*. Browsers
+   warn about it; use a CA-issued certificate in production. Either way the MSI grants the service Read on the
+   key and checks the grant. An upgrade, repair or change never creates a second certificate, and a failed
+   install removes the one it created.
 3. **Groups:** domain groups must already exist. A local group written as `.\Name` is created if it's
    missing. The MSI never adds members (section 3.4).
 4. **Data folder:** the MSI uses only `%ProgramData%\YANMT`. If `appsettings.json` or a machine environment
@@ -44,7 +46,8 @@ adding people to the groups, and antivirus exclusions. It never contacts a devic
 
 | Property | Default | Meaning |
 | --- | --- | --- |
-| `CERT_THUMBPRINT` | (required) | Thumbprint of the HTTPS certificate in `LocalMachine\My`. Spaces are ignored. |
+| `CERT_THUMBPRINT` | (required) | Thumbprint of the HTTPS certificate in `LocalMachine\My`. Spaces are ignored. Not needed with `CREATE_SELF_SIGNED_CERT=1`. |
+| `CREATE_SELF_SIGNED_CERT` | | `1` creates a self-signed certificate (section 1.1) and uses it. Giving it with `CERT_THUMBPRINT` is an error. Ignored when a thumbprint is already stored (upgrade, repair, change). |
 | `ADMIN_GROUPS` | (required) | Admin groups, separated by `;`: `CONTOSO\YANMT-Admins`, `.\YANMT-Admins` (local), or a SID. Single backslashes: this is not JSON. |
 | `VIEWER_GROUPS` | empty | Viewer groups, same format. |
 | `PORT` | `8443` | HTTPS port, 1 to 65535. |
@@ -58,8 +61,23 @@ line always wins.
 
 ### 1.3 Install
 
-**Interactive:** run the MSI. One dialog asks for the properties above. Bad values (unknown certificate,
-group that doesn't resolve, bad port) are shown there before anything is installed.
+**Interactive:** in an elevated PowerShell prompt in the download folder, this finds the MSI, checks its
+hash, unblocks it, and runs the interactive install with a verbose log:
+
+```powershell
+$msi = @(Get-ChildItem .\yanmt-*.msi)
+if ($msi.Count -ne 1) { throw "Expected one yanmt-X.Y.Z.msi in $PWD, found $($msi.Count)." }
+$msi = $msi[0]
+$hash = (Get-FileHash $msi.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+if (-not (Select-String .\SHA256SUMS.txt -SimpleMatch "$hash  $($msi.Name)" -Quiet)) { throw "$($msi.Name) doesn't match SHA256SUMS.txt." }
+Unblock-File $msi.FullName
+$log = Join-Path $PWD 'yanmt-install.log'
+$p = Start-Process msiexec.exe -ArgumentList "/i `"$($msi.FullName)`" /l*v `"$log`"" -Wait -PassThru
+"msiexec exit code $($p.ExitCode) (0 = installed); log: $log"
+```
+
+One dialog asks for the properties above; the certificate is a dropdown. Bad values (group that doesn't
+resolve, bad port, a certificate without its private key) are shown there before anything is installed.
 
 **Silent:** `msiexec` is a GUI program, so PowerShell doesn't wait for it and doesn't see its exit code.
 Define this helper once in the prompt; the examples in this section use it. It waits, writes a verbose
@@ -82,6 +100,9 @@ Invoke-Msi install.log '/i', '.\yanmt-1.2.3.msi',
     'CERT_THUMBPRINT=A1B2C3D4E5F60718293A4B5C6D7E8F9012345678',
     'ADMIN_GROUPS=CONTOSO\YANMT-Admins', 'VIEWER_GROUPS=CONTOSO\YANMT-Viewers',
     'FIREWALL_REMOTE_ADDRESS=192.0.2.0/24'
+
+# Test or lab server, with a self-signed certificate:
+Invoke-Msi install.log '/i', '.\yanmt-1.2.3.msi', 'CREATE_SELF_SIGNED_CERT=1', 'ADMIN_GROUPS=.\YANMT-Admins'
 ```
 
 Bad settings fail the install with exit code 1603 and change nothing; the reason is in the log. With plain
@@ -94,6 +115,8 @@ What the MSI does:
 - `C:\ProgramData\YANMT`: Modify for the service, Full control for Administrators and SYSTEM, nothing
   inherited. Files already in it are reset to inherit that ACL, and `secrets.entropy` gets its own
   protected ACL.
+- With `CREATE_SELF_SIGNED_CERT=1`, creates the certificate (as SYSTEM, in `LocalMachine\My`) and stores its
+  thumbprint. If the install then fails, the rollback removes it.
 - Read for the service on the certificate's private key. The installer reads the grant back and fails if
   it isn't there.
 - Creates missing local (`.\Name`) groups.
@@ -183,8 +206,9 @@ Removed: the service, the firewall rule, the Event Log source, `HKLM\SOFTWARE\YA
 folder. That includes **`appsettings.json`**; an upgrade keeps it, an uninstall doesn't. Copy it somewhere
 else first if you edited it and want to keep it.
 
-Kept: the data folder (database, backups, maps, logs, `secrets.entropy`), the service's Read grant on the
-certificate key, and the local groups. To discard everything as well:
+Kept: the data folder (database, backups, maps, logs, `secrets.entropy`), the certificate (also a
+self-signed one the MSI created; delete it in `certlm.msc` if you like), the service's Read grant on its
+key, and the local groups. To discard everything as well:
 
 ```powershell
 Remove-Item 'C:\ProgramData\YANMT' -Recurse   # database, backups and credentials: gone for good

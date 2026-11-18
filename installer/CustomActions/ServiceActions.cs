@@ -29,13 +29,13 @@ public static class ServiceActions
     {
         if (!Exists())
         {
-            session.Log("YANMT: no existing YANMT service.");
+            session.LogRaw("YANMT: no existing YANMT service.");
             return ActionResult.Success;
         }
 
         using (var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\" + ServiceIdentity.ServiceName))
         {
-            session.Log($"YANMT: replacing a YANMT service this MSI didn't install: runs as '{key?.GetValue("ObjectName")}', " +
+            session.LogRaw($"YANMT: replacing a YANMT service this MSI didn't install: runs as '{key?.GetValue("ObjectName")}', " +
                 $"binary '{key?.GetValue("ImagePath")}'. Its account is not deleted.");
         }
 
@@ -57,7 +57,7 @@ public static class ServiceActions
             Thread.Sleep(500);
         }
 
-        session.Log("YANMT: deleted the old YANMT service.");
+        session.LogRaw("YANMT: deleted the old YANMT service.");
         return ActionResult.Success;
     }
 
@@ -87,7 +87,7 @@ public static class ServiceActions
                 $"expected '{ServiceIdentity.Account}' from '{expected}'. The installation is rolled back.");
         }
 
-        session.Log($"YANMT: the YANMT service exists, runs as {account} from {image}.");
+        session.LogRaw($"YANMT: the YANMT service exists, runs as {account} from {image}.");
         return ActionResult.Success;
     }
 
@@ -111,7 +111,7 @@ public static class ServiceActions
             .Select(f => Path.Combine(dataFolder, f)).Where(File.Exists).ToList();
         if (files.Count == 0)
         {
-            session.Log($"YANMT: no database in {dataFolder}; nothing to back up before the upgrade.");
+            session.LogRaw($"YANMT: no database in {dataFolder}; nothing to back up before the upgrade.");
             return ActionResult.Success;
         }
 
@@ -130,17 +130,17 @@ public static class ServiceActions
             return Fail(session, $"Could not back up the database to {target} before the upgrade: {ex.Message}");
         }
 
-        session.Log($"YANMT: backed up {string.Join(", ", files.Select(Path.GetFileName))} to {target}.");
+        session.LogRaw($"YANMT: backed up {string.Join(", ", files.Select(Path.GetFileName))} to {target}.");
         foreach (var old in new DirectoryInfo(root).GetDirectories().OrderByDescending(d => d.CreationTimeUtc).Skip(KeptBackups))
         {
             try
             {
                 old.Delete(recursive: true);
-                session.Log($"YANMT: removed old pre-upgrade backup {old.FullName}.");
+                session.LogRaw($"YANMT: removed old pre-upgrade backup {old.FullName}.");
             }
             catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
             {
-                session.Log($"YANMT: could not remove old pre-upgrade backup {old.FullName}: {ex.Message}");
+                session.LogRaw($"YANMT: could not remove old pre-upgrade backup {old.FullName}: {ex.Message}");
             }
         }
 
@@ -164,16 +164,16 @@ public static class ServiceActions
                 service.WaitForStatus(ServiceControllerStatus.Running, StartTimeout);
             }
 
-            session.Log($"YANMT: the service is running. Sign in at {data["Url"]}");
+            session.LogRaw($"YANMT: the service is running. Sign in at {data["Url"]}");
         }
         catch (Exception ex)
         {
             // Anything at all: this action must not roll the install back (issue #40, 2.6).
-            session.Log($"YANMT WARNING: the installation finished, but the YANMT service did not start ({ex.Message}). " +
+            session.LogRaw($"YANMT WARNING: the installation finished, but the YANMT service did not start ({ex.Message}). " +
                 $"See {Path.Combine(data["DataFolder"], "logs", "startup-failure.log")} and DEPLOYMENT.md, Troubleshooting.");
         }
 
-        // Logged only ("YANMT WARNING: firewall: ..."); the final dialog checks again (ReportServiceState).
+        // Logged here, once ("YANMT WARNING: firewall: ..."); the final dialog checks again without logging (ReportServiceState).
         FirewallCheck.Check(session, int.Parse(data["Port"], System.Globalization.CultureInfo.InvariantCulture), data["FirewallRule"] == "1");
         return ActionResult.Success;
     }
@@ -210,12 +210,13 @@ public static class ServiceActions
         }
         catch (Exception ex)
         {
-            session.Log("YANMT: could not read the service state: " + ex.Message);
+            session.LogRaw("YANMT: could not read the service state: " + ex.Message);
             text = "Could not read the state of the YANMT service: " + ex.Message;
         }
 
         var port = int.TryParse(session["PORT"], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var p) ? p : 0;
-        if (FirewallCheck.Check(session, port, !string.IsNullOrEmpty(session["FIREWALL_REMOTE_ADDRESS"])) is { } warning)
+        // StartYanmtService already logged the firewall state; this is for the dialog only (issue #49, M7).
+        if (FirewallCheck.Check(session, port, !string.IsNullOrEmpty(session["FIREWALL_REMOTE_ADDRESS"]), log: false) is { } warning)
         {
             text += "\r\n\r\nFirewall: " + warning;
         }
@@ -261,7 +262,7 @@ public static class ServiceActions
             }
 
             service.WaitForStatus(ServiceControllerStatus.Stopped, StopTimeout);
-            session.Log("YANMT: stopped the YANMT service.");
+            session.LogRaw("YANMT: stopped the YANMT service.");
             return true;
         }
         catch (System.ServiceProcess.TimeoutException)
@@ -310,7 +311,7 @@ public static class ServiceActions
 
     private static ActionResult Fail(Session session, string message)
     {
-        session.Log("YANMT: " + message);
+        session.LogRaw("YANMT: " + message);
         SettingsActions.Fail(session, message);
         return ActionResult.Failure;
     }

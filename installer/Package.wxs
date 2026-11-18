@@ -5,7 +5,10 @@
 
   Properties (silent: msiexec /i yanmt-X.Y.Z.msi /qn CERT_THUMBPRINT=... ADMIN_GROUPS="CONTOSO\YANMT-Admins" /l*v install.log):
     PORT                     HTTPS port, default 8443.
-    CERT_THUMBPRINT          Required. In LocalMachine\My, with a private key. Spaces are ignored.
+    CERT_THUMBPRINT          In LocalMachine\My, with a private key. Spaces are ignored. Required unless:
+    CREATE_SELF_SIGNED_CERT  1 = create a self-signed certificate for this server (test / lab; browsers warn). Not
+                             with CERT_THUMBPRINT. Ignored when a thumbprint is already stored (upgrade, repair, change):
+                             never a second certificate. A rollback removes the certificate it created; uninstall keeps it.
     ADMIN_GROUPS             Required. ';'-separated, same forms as Yanmt:Roles:AdminGroups. Missing .\Name groups are created.
     VIEWER_GROUPS            Optional, same forms.
     FIREWALL_REMOTE_ADDRESS  Optional. Remote address scope of the inbound rule (all profiles); empty = no rule.
@@ -71,6 +74,18 @@
       <RegistrySearch Id="FirewallSearch" Root="HKLM" Key="$(var.SettingsKey)" Name="FirewallRemoteAddress" Type="raw" Bitness="always64" />
     </Property>
 
+    <!--
+      Certificate (issue #49). The stored thumbprint on its own, to tell "stored" from "given on this command line"
+      (YANMT_CMD_CERT_THUMBPRINT): CREATE_SELF_SIGNED_CERT=1 with a stored one is ignored, with a given one an error.
+    -->
+    <Property Id="YANMT_STORED_CERT_THUMBPRINT" Secure="yes">
+      <RegistrySearch Id="StoredThumbprintSearch" Root="HKLM" Key="$(var.SettingsKey)" Name="CertificateThumbprint" Type="raw" Bitness="always64" />
+    </Property>
+    <Property Id="CREATE_SELF_SIGNED_CERT" Secure="yes" />
+    <!-- Set by ValidateSettingsUi, so the execute sequence's log says where the settings came from. -->
+    <Property Id="YANMT_SETTINGS_FROM_DIALOG" Secure="yes" />
+    <!-- The dropdown's certificate rows are added at run time (CertificateList.ListCertificates). -->
+
     <?foreach P in PORT;CERT_THUMBPRINT;ADMIN_GROUPS;VIEWER_GROUPS;FIREWALL_REMOTE_ADDRESS ?>
     <SetProperty Id="YANMT_CMD_$(P)" Action="YanmtSave_$(P)" Value="[$(P)]" Before="AppSearch" Sequence="both" />
     <SetProperty Id="$(P)" Action="YanmtRestore_$(P)" Value="[YANMT_CMD_$(P)]" After="AppSearch" Sequence="both" Condition="YANMT_CMD_$(P)" />
@@ -94,6 +109,7 @@
       Its files may have any version (a hand build was 1.0.0.0 before issue #47), and Windows Installer skips a
       component whose key file on disk is newer, which once left no service at all. So for a legacy install every
       file is replaced regardless of version (REINSTALLMODE "a"); appsettings.json is kept (NeverOverwrite).
+      Set in both sequences, so the UI's costing agrees with the server's (issue #49, M7), and logged by LogLegacyInstall.
       PrepareInstall refuses any new install where YanmtService still wouldn't be installed.
     -->
     <Property Id="YANMT_LEGACY_SERVICE" Secure="yes">
@@ -106,7 +122,7 @@
     </Property>
     <SetProperty Id="YANMT_LEGACY" Action="YanmtDetectLegacy" Value="1" After="AppSearch" Sequence="both"
                  Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED AND (YANMT_LEGACY_SERVICE OR YANMT_LEGACY_EXE)" />
-    <SetProperty Id="REINSTALLMODE" Action="YanmtForceLegacyFiles" Value="amus" Before="CostInitialize" Sequence="execute"
+    <SetProperty Id="REINSTALLMODE" Action="YanmtForceLegacyFiles" Value="amus" Before="CostInitialize" Sequence="both"
                  Condition="YANMT_LEGACY" />
 
     <!--
@@ -133,6 +149,12 @@
 
     <UIRef Id="YanmtUI" />
 
+    <!--
+      WIXFAILWHENDEFERRED=1 fails the install at its end, so it rolls back. Only the smoke test sets it, to check
+      that a rollback removes the self-signed certificate (issue #49). Without the property it does nothing.
+    -->
+    <util:FailWhenDeferred />
+
     <!-- Custom actions (installer/CustomActions). Deferred ones run as LocalSystem. -->
     <Binary Id="YanmtCA" SourceFile="$(var.Yanmt.Installer.CustomActions.TargetDir)Yanmt.Installer.CustomActions.CA.dll" />
     <CustomAction Id="ValidateSettingsUi" BinaryRef="YanmtCA" DllEntry="ValidateSettingsUi" Execute="immediate" Return="check" />
@@ -141,6 +163,10 @@
     <CustomAction Id="RemoveLegacyService" BinaryRef="YanmtCA" DllEntry="RemoveLegacyService" Execute="deferred" Impersonate="no" Return="check" />
     <CustomAction Id="VerifyYanmtService" BinaryRef="YanmtCA" DllEntry="VerifyYanmtService" Execute="deferred" Impersonate="no" Return="check" />
     <CustomAction Id="SetFolderAcls" BinaryRef="YanmtCA" DllEntry="SetFolderAcls" Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="LogLegacyInstall" BinaryRef="YanmtCA" DllEntry="LogLegacyInstall" Execute="immediate" Return="ignore" />
+    <CustomAction Id="ListCertificates" BinaryRef="YanmtCA" DllEntry="ListCertificates" Execute="immediate" Return="ignore" />
+    <CustomAction Id="RemoveSelfSignedCert" BinaryRef="YanmtCA" DllEntry="RemoveSelfSignedCert" Execute="rollback" Impersonate="no" Return="ignore" />
+    <CustomAction Id="CreateSelfSignedCert" BinaryRef="YanmtCA" DllEntry="CreateSelfSignedCert" Execute="deferred" Impersonate="no" Return="check" />
     <CustomAction Id="GrantKeyRead" BinaryRef="YanmtCA" DllEntry="GrantKeyRead" Execute="deferred" Impersonate="no" Return="check" />
     <CustomAction Id="CreateLocalGroups" BinaryRef="YanmtCA" DllEntry="CreateLocalGroups" Execute="deferred" Impersonate="no" Return="check" />
     <CustomAction Id="StartYanmtService" BinaryRef="YanmtCA" DllEntry="StartYanmtService" Execute="deferred" Impersonate="no" Return="ignore" />
@@ -149,6 +175,7 @@
     <SetProperty Id="CleanInstallFolder" Value="InstallFolder=[INSTALLFOLDER]" Before="CleanInstallFolder" Sequence="execute" />
 
     <InstallExecuteSequence>
+      <Custom Action="LogLegacyInstall" After="YanmtDetectLegacy" Condition="YANMT_LEGACY" />
       <Custom Action="PrepareInstall" After="CostFinalize" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
       <RemoveExistingProducts After="InstallInitialize" />
       <Custom Action="BackupBeforeUpgrade" After="RemoveExistingProducts" Condition="WIX_UPGRADE_DETECTED AND NOT (REMOVE~=&quot;ALL&quot;)" />
@@ -156,12 +183,17 @@
       <Custom Action="RemoveLegacyService" After="StopServices" Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED AND NOT (REMOVE~=&quot;ALL&quot;) AND $YanmtService = 3" />
       <Custom Action="VerifyYanmtService" After="InstallServices" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
       <Custom Action="SetFolderAcls" After="StartServices" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
-      <Custom Action="GrantKeyRead" After="SetFolderAcls" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
+      <!-- YANMT_CREATE_CERT: set by PrepareInstall for CREATE_SELF_SIGNED_CERT=1 with no stored thumbprint. The rollback comes first. -->
+      <Custom Action="RemoveSelfSignedCert" After="SetFolderAcls" Condition="YANMT_CREATE_CERT AND NOT (REMOVE~=&quot;ALL&quot;)" />
+      <Custom Action="CreateSelfSignedCert" After="RemoveSelfSignedCert" Condition="YANMT_CREATE_CERT AND NOT (REMOVE~=&quot;ALL&quot;)" />
+      <Custom Action="GrantKeyRead" After="CreateSelfSignedCert" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
       <Custom Action="CreateLocalGroups" After="GrantKeyRead" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
       <Custom Action="StartYanmtService" Before="InstallFinalize" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
       <Custom Action="CleanInstallFolder" After="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
     <InstallUISequence>
+      <Custom Action="LogLegacyInstall" After="YanmtDetectLegacy" Condition="YANMT_LEGACY" />
+      <Custom Action="ListCertificates" After="CostFinalize" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
       <Custom Action="ReportServiceState" After="ExecuteAction" Condition="NOT (REMOVE~=&quot;ALL&quot;)" />
     </InstallUISequence>
   </Package>

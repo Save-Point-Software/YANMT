@@ -18,11 +18,19 @@ internal static class FirewallCheck
     private static readonly (int Bit, string Name)[] Profiles = [(1, "Domain"), (2, "Private"), (4, "Public")];
 
     /// <summary>
-    /// Logs the state and returns a short warning when an active profile with the firewall on has no
+    /// Logs the state (unless <paramref name="log"/> is false) and returns a short warning when an active profile with the firewall on has no
     /// working YANMT rule, or null when it's covered (or the state can't be read).
     /// </summary>
-    public static string? Check(Session session, int port, bool ruleExpected)
+    public static string? Check(Session session, int port, bool ruleExpected, bool log = true)
     {
+        void Log(string line)
+        {
+            if (log)
+            {
+                session.LogRaw(line);
+            }
+        }
+
         object? policy = null;
         try
         {
@@ -41,7 +49,7 @@ internal static class FirewallCheck
 
             if (guarded == 0)
             {
-                session.Log($"YANMT: firewall: off for the active profile(s) {activeNames}; nothing to check.");
+                Log($"YANMT: firewall: off for the active profile(s) {activeNames}; nothing to check.");
                 return null;
             }
 
@@ -75,7 +83,7 @@ internal static class FirewallCheck
                 Marshal.ReleaseComObject(rule);
             }
 
-            session.Log(warning is null
+            Log(warning is null
                 ? $"YANMT: firewall: the active profile(s) {activeNames} are covered by \"{RuleName}\" (TCP {port})."
                 : $"YANMT WARNING: firewall: {warning} Active profile(s): {activeNames}. See DEPLOYMENT.md, Troubleshooting.");
             return warning;
@@ -83,7 +91,7 @@ internal static class FirewallCheck
         catch (Exception ex)
         {
             // Never fail the install over a read-only check.
-            session.Log("YANMT: could not read the firewall state: " + (ex is TargetInvocationException t && t.InnerException != null ? t.InnerException.Message : ex.Message));
+            Log("YANMT: could not read the firewall state: " + (ex is TargetInvocationException t && t.InnerException != null ? t.InnerException.Message : ex.Message));
             return null;
         }
         finally

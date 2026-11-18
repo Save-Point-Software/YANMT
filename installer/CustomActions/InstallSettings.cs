@@ -34,7 +34,16 @@ internal sealed class InstallSettings
     public const int ThumbprintLength = 40;
 
     public int Port { get; private set; }
+
+    /// <summary>The certificate to use; empty when <see cref="CreateSelfSigned"/> is set (the thumbprint is known only once it exists).</summary>
     public string Thumbprint { get; private set; } = "";
+
+    /// <summary>CREATE_SELF_SIGNED_CERT=1 on a machine with no stored thumbprint: CreateSelfSignedCert makes one.</summary>
+    public bool CreateSelfSigned { get; private set; }
+
+    /// <summary>Log-only notes, such as a CREATE_SELF_SIGNED_CERT=1 that was ignored.</summary>
+    public List<string> Notes { get; } = [];
+
     public List<GroupEntry> AdminGroups { get; } = [];
     public List<GroupEntry> ViewerGroups { get; } = [];
     public string FirewallRemoteAddress { get; private set; } = "";
@@ -47,7 +56,7 @@ internal sealed class InstallSettings
     {
         var s = new InstallSettings();
         s.ReadPort(session["PORT"]);
-        s.ReadThumbprint(session["CERT_THUMBPRINT"]);
+        s.ReadCertificate(session);
         s.ReadGroups(session["ADMIN_GROUPS"], isAdmin: true);
         s.ReadGroups(session["VIEWER_GROUPS"], isAdmin: false);
         if (s.AdminGroups.Count == 0)
@@ -71,6 +80,7 @@ internal sealed class InstallSettings
     {
         session["PORT"] = Port.ToString(CultureInfo.InvariantCulture);
         session["CERT_THUMBPRINT"] = Thumbprint;
+        session["CREATE_SELF_SIGNED_CERT"] = CreateSelfSigned ? "1" : "";
         session["ADMIN_GROUPS"] = string.Join(";", AdminGroups.Select(g => g.Configured));
         session["VIEWER_GROUPS"] = string.Join(";", ViewerGroups.Select(g => g.Configured));
         session["FIREWALL_REMOTE_ADDRESS"] = FirewallRemoteAddress;
@@ -105,11 +115,47 @@ internal sealed class InstallSettings
         return hex;
     }
 
+    /// <summary>
+    /// CERT_THUMBPRINT or CREATE_SELF_SIGNED_CERT=1, not both. A thumbprint already stored in the registry (upgrade,
+    /// repair, change) means a certificate exists, so CREATE_SELF_SIGNED_CERT=1 is then ignored: never a second one.
+    /// "Both" means both on this command line (YANMT_CMD_CERT_THUMBPRINT, saved before AppSearch), not the stored value.
+    /// </summary>
+    private void ReadCertificate(Session session)
+    {
+        var create = (session["CREATE_SELF_SIGNED_CERT"] ?? "").Trim();
+        if (create.Length > 0 && create != "1" && create != "0")
+        {
+            Errors.Add($"CREATE_SELF_SIGNED_CERT must be 1 (or not given), not '{create}'.");
+            return;
+        }
+
+        if (create == "1")
+        {
+            var stored = (session["YANMT_STORED_CERT_THUMBPRINT"] ?? "").Trim();
+            if (!string.IsNullOrWhiteSpace(session["YANMT_CMD_CERT_THUMBPRINT"]))
+            {
+                Errors.Add("Give CERT_THUMBPRINT or CREATE_SELF_SIGNED_CERT=1, not both.");
+                return;
+            }
+
+            if (stored.Length == 0)
+            {
+                CreateSelfSigned = true;
+                return;
+            }
+
+            Notes.Add($"CREATE_SELF_SIGNED_CERT=1 ignored: certificate {stored} is already stored, and the installer never creates a second one.");
+        }
+
+        ReadThumbprint(session["CERT_THUMBPRINT"]);
+    }
+
     private void ReadThumbprint(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
-            Errors.Add(@"CERT_THUMBPRINT is required: the thumbprint of the HTTPS certificate in LocalMachine\My.");
+            Errors.Add(@"CERT_THUMBPRINT is required: the thumbprint of the HTTPS certificate in LocalMachine\My. " +
+                "For a test or lab server, CREATE_SELF_SIGNED_CERT=1 creates one instead.");
             return;
         }
 

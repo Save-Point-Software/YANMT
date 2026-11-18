@@ -25,11 +25,25 @@ public static class CertificateActions
     [CustomAction]
     public static ActionResult GrantKeyRead(Session session)
     {
-        var thumbprint = session.CustomActionData["Thumbprint"];
-        using var store = new X509Store(StoreName.My, StoreLocation.LocalMachine);
-        store.Open(OpenFlags.ReadOnly | OpenFlags.OpenExistingOnly);
-        var cert = store.Certificates.Find(X509FindType.FindByThumbprint, thumbprint, validOnly: false)
-            .Cast<X509Certificate2>().FirstOrDefault();
+        // A self-signed certificate this install just created has no thumbprint yet when the script is built:
+        // PrepareInstall passes its serial number instead (SelfSignedCertificate).
+        var data = session.CustomActionData;
+        var serial = data.ContainsKey("Serial") ? data["Serial"] : "";
+        var thumbprint = data.ContainsKey("Thumbprint") ? data["Thumbprint"] : "";
+        X509Certificate2? cert;
+        if (serial.Length > 0)
+        {
+            cert = SelfSignedCertificate.Find(serial);
+            thumbprint = cert?.Thumbprint ?? $"(self-signed, serial {serial})";
+        }
+        else
+        {
+            using var store = new X509Store(StoreName.My, StoreLocation.LocalMachine);
+            store.Open(OpenFlags.ReadOnly | OpenFlags.OpenExistingOnly);
+            cert = store.Certificates.Find(X509FindType.FindByThumbprint, thumbprint, validOnly: false)
+                .Cast<X509Certificate2>().FirstOrDefault();
+        }
+
         if (cert is null || !cert.HasPrivateKey)
         {
             return Fail(session, $@"Certificate {thumbprint} with a private key not found in LocalMachine\My.");
@@ -68,7 +82,7 @@ public static class CertificateActions
                     "but reading the key's permissions back doesn't show the grant. Grant it in certlm.msc (Manage Private Keys), then repair the install.");
             }
 
-            session.Log($"YANMT: {ServiceIdentity.Account} can read the {kind} private key of certificate {thumbprint} (checked).");
+            session.LogRaw($"YANMT: {ServiceIdentity.Account} can read the {kind} private key of certificate {thumbprint} (checked).");
         }
 
         return ActionResult.Success;
@@ -121,7 +135,7 @@ public static class CertificateActions
 
     private static ActionResult Fail(Session session, string message)
     {
-        session.Log("YANMT: " + message);
+        session.LogRaw("YANMT: " + message);
         SettingsActions.Fail(session, message);
         return ActionResult.Failure;
     }
