@@ -19,6 +19,10 @@ public static class SettingsActions
         {
             // The certificate dropdown (CertificateList): a thumbprint, or the self-signed choice.
             var choice = session[CertificateList.ChoiceProperty] ?? "";
+            if (choice == CertificateList.NoChoice)
+            {
+                choice = "";
+            }
             if (choice == CertificateList.SelfSignedChoice)
             {
                 session["CERT_THUMBPRINT"] = "";

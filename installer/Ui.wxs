@@ -60,7 +60,12 @@
         <Control Id="CertLabel" Type="Text" X="20" Y="50" Width="330" Height="11" NoPrefix="yes"
                  Text="HTTPS certificate (LocalMachine\My, with a private key, not expired):" />
         <Control Id="CertCombo" Type="ComboBox" X="20" Y="62" Width="330" Height="16" Property="YANMT_CERT_CHOICE"
-                 ComboList="yes" Sorted="yes" />
+                 ComboList="yes" Sorted="yes">
+          <!-- ICE17 needs one static row; ListCertificates adds the certificates after it (Order 2 on). -->
+          <ComboBox Property="YANMT_CERT_CHOICE">
+            <ListItem Value="NONE" Text="Choose a certificate..." />
+          </ComboBox>
+        </Control>
         <Control Id="CertNote" Type="Text" X="20" Y="80" Width="330" Height="10" NoPrefix="yes"
                  Text="Self-signed: browsers will warn. Use a CA-issued certificate in production." />
 

@@ -84,8 +84,7 @@
     <Property Id="CREATE_SELF_SIGNED_CERT" Secure="yes" />
     <!-- Set by ValidateSettingsUi, so the execute sequence's log says where the settings came from. -->
     <Property Id="YANMT_SETTINGS_FROM_DIALOG" Secure="yes" />
-    <!-- The dropdown's rows are added at run time (CertificateList.ListCertificates). -->
-    <EnsureTable Id="ComboBox" />
+    <!-- The dropdown's certificate rows are added at run time (CertificateList.ListCertificates). -->
 
     <?foreach P in PORT;CERT_THUMBPRINT;ADMIN_GROUPS;VIEWER_GROUPS;FIREWALL_REMOTE_ADDRESS ?>
     <SetProperty Id="YANMT_CMD_$(P)" Action="YanmtSave_$(P)" Value="[$(P)]" Before="AppSearch" Sequence="both" />

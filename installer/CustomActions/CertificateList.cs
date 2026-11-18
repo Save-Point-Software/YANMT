@@ -15,6 +15,9 @@ public static class CertificateList
     public const string ChoiceProperty = "YANMT_CERT_CHOICE";
     public const string SelfSignedChoice = "SELF_SIGNED";
 
+    /// <summary>The static first row (Ui.wxs; ICE17 needs one): "Choose a certificate...". Means nothing chosen.</summary>
+    public const string NoChoice = "NONE";
+
     private const string SelfSignedText = "Create a self-signed certificate for this server (for testing / lab)";
 
     /// <summary>The ComboBox table's Text column is 64 characters; longer text is tried first, then cut.</summary>
@@ -79,7 +82,7 @@ public static class CertificateList
             session[ChoiceProperty] =
                 current != null ? current
                 : canCreate && (session["CREATE_SELF_SIGNED_CERT"] == "1" || entries.Count == 1) ? SelfSignedChoice
-                : "";
+                : NoChoice;
             session.Log($"YANMT: certificate list: {entries.Count(e => e.Value != SelfSignedChoice)} certificate(s)" +
                 (canCreate ? " and the self-signed choice" : " (a thumbprint is stored, so no self-signed choice)") +
                 $"; selected [{session[ChoiceProperty]}].");
@@ -97,7 +100,7 @@ public static class CertificateList
     {
         using var view = session.Database.OpenView("SELECT `Property`, `Order`, `Value`, `Text` FROM `ComboBox`");
         view.Execute();
-        var order = 1;
+        var order = 2;   // 1 is the static "Choose a certificate..." row.
         foreach (var (value, text, shortText) in entries)
         {
             using var record = session.Database.CreateRecord(4);
