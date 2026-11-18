@@ -13,8 +13,8 @@ dotnet build installer/Yanmt.Installer.wixproj -c Release -p:ProductVersion=1.2.
 | --- | --- |
 | `Package.wxs` | Files, service (`NT SERVICE\YANMT`), registry settings, firewall rule, event source, upgrade rules, sequencing. |
 | `Ui.wxs` | Dialog flow and the one settings dialog. |
-| `CustomActions/` | C# (.NET Framework 4.8) actions: check settings, back up the database before an upgrade, replace a manual install's service, check the service exists, folder ACLs, certificate key grant, local groups, start the service, firewall profile check. |
-| `tests/Smoke.ps1` | CI smoke test: manual install (with a newer-versioned exe), MSI install over it, upgrade, downgrade refused, uninstall. Only for a throwaway machine. |
+| `CustomActions/` | C# (.NET Framework 4.8) actions: check settings, list certificates for the dialog, create a self-signed certificate (and remove it on rollback), back up the database before an upgrade, replace a manual install's service, check the service exists, folder ACLs, certificate key grant, local groups, start the service, firewall profile check. |
+| `tests/Smoke.ps1` | CI smoke test: manual install (with a newer-versioned exe), MSI install over it, upgrade, downgrade refused, uninstall, self-signed certificate (install, repair, rollback). Only for a throwaway machine. |
 
 ## Releases
 
@@ -25,6 +25,8 @@ builds `yanmt-X.Y.Z.msi` with the same version, and attaches it plus `SHA256SUMS
 A bad tag fails the run and attaches nothing. Re-running a failed run replaces both files.
 
 Check a download: `Get-FileHash yanmt-X.Y.Z.msi -Algorithm SHA256` must match the line in `SHA256SUMS.txt`.
+For the release body, start from `.github/RELEASE_NOTES_TEMPLATE.md`: asset name, a copy-paste install block
+(hash check, `Unblock-File`, `/l*v` log) and the SmartScreen note.
 
 WiX v7 needs the OSMF EULA accepted (`installer/Directory.Build.props`). The owner accepted it on
 2026-11-11 because YANMT earns no revenue. The MSI is unsigned for now.
