@@ -27,7 +27,7 @@ internal static class FirewallCheck
         {
             if (log)
             {
-                session.Log(line);
+                session.LogRaw(line);
             }
         }
 

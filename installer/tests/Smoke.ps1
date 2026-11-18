@@ -393,11 +393,11 @@ try {
 
     # --------------------------------------------------------------------------------------------
     Step '7. Self-signed certificate (CREATE_SELF_SIGNED_CERT=1)'
-    Check ((Get-SelfSigned).Count -eq 0) 'self-signed: no YANMT certificate yet (precondition)'
+    Check (@(Get-SelfSigned).Count -eq 0) 'self-signed: no YANMT certificate yet (precondition)'
     $code = Invoke-Msi 'self-signed-both.log' @('/i', $Msi2, "CERT_THUMBPRINT=$thumb", 'CREATE_SELF_SIGNED_CERT=1', 'ADMIN_GROUPS=.\YANMT-Admins')
     Check ($code -eq 1603) "self-signed with CERT_THUMBPRINT too: refused (got $code)"
     Check ((Select-String -Path (Join-Path $LogDir 'self-signed-both.log') -Pattern 'not both' -Quiet)) 'self-signed with CERT_THUMBPRINT too: the log says why'
-    Check ((Get-SelfSigned).Count -eq 0 -and @(Get-Products).Count -eq 0) 'self-signed with CERT_THUMBPRINT too: nothing created or installed'
+    Check (@(Get-SelfSigned).Count -eq 0 -and @(Get-Products).Count -eq 0) 'self-signed with CERT_THUMBPRINT too: nothing created or installed'
 
     $code = Invoke-Msi 'self-signed.log' @('/i', $Msi2, 'CREATE_SELF_SIGNED_CERT=1', 'ADMIN_GROUPS=.\YANMT-Admins', "PORT=$port")
     Check ($code -eq 0) "self-signed install: exit code 0 (got $code)"
@@ -438,7 +438,7 @@ try {
 
     $code = Invoke-Msi 'self-signed-uninstall.log' @('/x', $Msi2)
     Check ($code -eq 0) "self-signed uninstall: exit code 0 (got $code)"
-    Check ((Get-SelfSigned).Count -eq 1) 'self-signed uninstall: the certificate is kept'
+    Check (@(Get-SelfSigned).Count -eq 1) 'self-signed uninstall: the certificate is kept'
 
     # --------------------------------------------------------------------------------------------
     Step '8. A self-signed install that rolls back removes its certificate'

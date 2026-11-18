@@ -118,7 +118,7 @@ public static class SelfSignedCertificate
                 settings.SetValue("CertificateThumbprint", thumbprint, RegistryValueKind.String);
             }
 
-            session.Log($@"YANMT: created the self-signed certificate {thumbprint} in LocalMachine\My: CN={names[0]}, " +
+            session.LogRaw($@"YANMT: created the self-signed certificate {thumbprint} in LocalMachine\My: CN={names[0]}, " +
                 $"SAN DNS [{string.Join(", ", names)}], RSA {KeySize} (non-exportable), Server Authentication, " +
                 $"expires {notAfter:yyyy-MM-dd}, serial {serial}, friendly name \"{FriendlyName}\".");
             return ActionResult.Success;
@@ -154,7 +154,7 @@ public static class SelfSignedCertificate
                         if (IsOurs(cert, serial))
                         {
                             store.Remove(cert);
-                            session.Log($"YANMT: rollback: removed the self-signed certificate {cert.Thumbprint} this install created.");
+                            session.LogRaw($"YANMT: rollback: removed the self-signed certificate {cert.Thumbprint} this install created.");
                         }
                     }
                 }
@@ -164,12 +164,12 @@ public static class SelfSignedCertificate
             {
                 using var key = CngKey.Open(KeyName(serial), CngProvider.MicrosoftSoftwareKeyStorageProvider, CngKeyOpenOptions.MachineKey);
                 key.Delete();
-                session.Log($"YANMT: rollback: deleted the key {KeyName(serial)}.");
+                session.LogRaw($"YANMT: rollback: deleted the key {KeyName(serial)}.");
             }
         }
         catch (Exception ex)
         {
-            session.Log($"YANMT: rollback: could not remove the self-signed certificate (serial {serial}): {ex.Message}");
+            session.LogRaw($"YANMT: rollback: could not remove the self-signed certificate (serial {serial}): {ex.Message}");
         }
 
         return ActionResult.Success;
@@ -232,7 +232,7 @@ public static class SelfSignedCertificate
 
     private static ActionResult Fail(Session session, string message)
     {
-        session.Log("YANMT: " + message);
+        session.LogRaw("YANMT: " + message);
         SettingsActions.Fail(session, message);
         return ActionResult.Failure;
     }

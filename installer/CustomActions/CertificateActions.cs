@@ -82,7 +82,7 @@ public static class CertificateActions
                     "but reading the key's permissions back doesn't show the grant. Grant it in certlm.msc (Manage Private Keys), then repair the install.");
             }
 
-            session.Log($"YANMT: {ServiceIdentity.Account} can read the {kind} private key of certificate {thumbprint} (checked).");
+            session.LogRaw($"YANMT: {ServiceIdentity.Account} can read the {kind} private key of certificate {thumbprint} (checked).");
         }
 
         return ActionResult.Success;
@@ -135,7 +135,7 @@ public static class CertificateActions
 
     private static ActionResult Fail(Session session, string message)
     {
-        session.Log("YANMT: " + message);
+        session.LogRaw("YANMT: " + message);
         SettingsActions.Fail(session, message);
         return ActionResult.Failure;
     }

@@ -34,7 +34,7 @@ public static class MachineActions
             using var existing = GroupPrincipal.FindByIdentity(context, IdentityType.SamAccountName, name);
             if (existing != null)
             {
-                session.Log($"YANMT: local group {name} already exists.");
+                session.LogRaw($"YANMT: local group {name} already exists.");
                 continue;
             }
 
@@ -43,7 +43,7 @@ public static class MachineActions
                 Description = isAdmin ? "YANMT administrators" : "YANMT read-only users",
             };
             group.Save();
-            session.Log($"YANMT: created local group {Environment.MachineName}\\{name} (no members; add them yourself).");
+            session.LogRaw($"YANMT: created local group {Environment.MachineName}\\{name} (no members; add them yourself).");
         }
 
         return ActionResult.Success;
@@ -73,7 +73,7 @@ public static class MachineActions
             security.AddAccessRule(new FileSystemAccessRule(Administrators, FileSystemRights.FullControl, AccessControlType.Allow));
             security.AddAccessRule(new FileSystemAccessRule(LocalSystem, FileSystemRights.FullControl, AccessControlType.Allow));
             File.SetAccessControl(entropy, security);
-            session.Log($"YANMT: reset the ACL of {entropy}.");
+            session.LogRaw($"YANMT: reset the ACL of {entropy}.");
         }
 
         return ActionResult.Success;
@@ -110,7 +110,7 @@ public static class MachineActions
             reset++;
         }
 
-        session.Log($"YANMT: {folder}: {ServiceIdentity.Account} ({ServiceIdentity.Sid.Value}) {serviceRights}, " +
+        session.LogRaw($"YANMT: {folder}: {ServiceIdentity.Account} ({ServiceIdentity.Sid.Value}) {serviceRights}, " +
             $"Administrators and SYSTEM full control, not inherited; {reset} existing entries reset to inherit only.");
     }
 
@@ -148,7 +148,7 @@ public static class MachineActions
             if (File.Exists(settings))
             {
                 File.Delete(settings);
-                session.Log($"YANMT: removed {settings}.");
+                session.LogRaw($"YANMT: removed {settings}.");
             }
 
             if (Directory.Exists(folder))
@@ -165,13 +165,13 @@ public static class MachineActions
                 if (!Directory.EnumerateFileSystemEntries(folder).Any())
                 {
                     Directory.Delete(folder);
-                    session.Log($"YANMT: removed the empty {folder}.");
+                    session.LogRaw($"YANMT: removed the empty {folder}.");
                 }
             }
         }
         catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
         {
-            session.Log($"YANMT: could not clean up {folder}: {ex.Message}");
+            session.LogRaw($"YANMT: could not clean up {folder}: {ex.Message}");
         }
 
         return ActionResult.Success;

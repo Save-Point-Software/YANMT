@@ -75,7 +75,7 @@ public static class SettingsActions
         {
             foreach (var error in settings.Errors)
             {
-                session.Log("YANMT: " + error);
+                session.LogRaw("YANMT: " + error);
             }
 
             Fail(session, "YANMT can't be installed with these settings:\r\n\r\n" + string.Join("\r\n", settings.Errors));
@@ -90,7 +90,7 @@ public static class SettingsActions
         {
             var existing = System.IO.Path.Combine(session["INSTALLFOLDER"], "yanmt.exe");
             var version = System.IO.File.Exists(existing) ? System.Diagnostics.FileVersionInfo.GetVersionInfo(existing).FileVersion : "none";
-            session.Log($"YANMT: the YanmtService component would not be installed (existing {existing}, file version {version}).");
+            session.LogRaw($"YANMT: the YanmtService component would not be installed (existing {existing}, file version {version}).");
             Fail(session, $"Windows Installer would not install yanmt.exe or the YANMT service: {existing} (file version {version}) " +
                 "is newer than the one in this package. Nothing was changed. Remove that file (stop the service first) and run the installer again.");
             return ActionResult.Failure;
@@ -161,7 +161,7 @@ public static class SettingsActions
 
         foreach (var note in settings.Notes)
         {
-            session.Log("YANMT: " + note);
+            session.LogRaw("YANMT: " + note);
         }
 
         // Logged once, here, with the values this install uses: in a full-UI install this runs after the dialog.
@@ -169,7 +169,7 @@ public static class SettingsActions
         var certificate = settings.CreateSelfSigned
             ? "a new self-signed one (CREATE_SELF_SIGNED_CERT=1, created later in the install)"
             : settings.Thumbprint;
-        session.Log($"YANMT: settings OK ({source}). Port {settings.Port}, certificate {certificate}, " +
+        session.LogRaw($"YANMT: settings OK ({source}). Port {settings.Port}, certificate {certificate}, " +
             $"admin groups [{string.Join("; ", settings.AdminGroups.Select(g => g.Configured))}], " +
             $"viewer groups [{string.Join("; ", settings.ViewerGroups.Select(g => g.Configured))}], " +
             $"firewall remote address [{settings.FirewallRemoteAddress}]" +
@@ -185,7 +185,7 @@ public static class SettingsActions
     [CustomAction]
     public static ActionResult LogLegacyInstall(Session session)
     {
-        session.Log("YANMT: legacy install detected: replacing all files regardless of version " +
+        session.LogRaw("YANMT: legacy install detected: replacing all files regardless of version " +
             $"(REINSTALLMODE=amus; service image [{session["YANMT_LEGACY_SERVICE"]}], exe [{session["YANMT_LEGACY_EXE"]}]).");
         return ActionResult.Success;
     }

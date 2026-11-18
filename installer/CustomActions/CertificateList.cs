@@ -83,14 +83,14 @@ public static class CertificateList
                 current != null ? current
                 : canCreate && (session["CREATE_SELF_SIGNED_CERT"] == "1" || entries.Count == 1) ? SelfSignedChoice
                 : NoChoice;
-            session.Log($"YANMT: certificate list: {entries.Count(e => e.Value != SelfSignedChoice)} certificate(s)" +
+            session.LogRaw($"YANMT: certificate list: {entries.Count(e => e.Value != SelfSignedChoice)} certificate(s)" +
                 (canCreate ? " and the self-signed choice" : " (a thumbprint is stored, so no self-signed choice)") +
                 $"; selected [{session[ChoiceProperty]}].");
         }
         catch (Exception ex)
         {
             // The dialog still opens; Next then says no certificate was chosen.
-            session.Log("YANMT: could not list the certificates: " + ex.Message);
+            session.LogRaw("YANMT: could not list the certificates: " + ex.Message);
         }
 
         return ActionResult.Success;
