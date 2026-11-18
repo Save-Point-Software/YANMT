@@ -173,7 +173,7 @@ public static class ServiceActions
                 $"See {Path.Combine(data["DataFolder"], "logs", "startup-failure.log")} and DEPLOYMENT.md, Troubleshooting.");
         }
 
-        // Logged only ("YANMT WARNING: firewall: ..."); the final dialog checks again (ReportServiceState).
+        // Logged here, once ("YANMT WARNING: firewall: ..."); the final dialog checks again without logging (ReportServiceState).
         FirewallCheck.Check(session, int.Parse(data["Port"], System.Globalization.CultureInfo.InvariantCulture), data["FirewallRule"] == "1");
         return ActionResult.Success;
     }
@@ -215,7 +215,8 @@ public static class ServiceActions
         }
 
         var port = int.TryParse(session["PORT"], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var p) ? p : 0;
-        if (FirewallCheck.Check(session, port, !string.IsNullOrEmpty(session["FIREWALL_REMOTE_ADDRESS"])) is { } warning)
+        // StartYanmtService already logged the firewall state; this is for the dialog only (issue #49, M7).
+        if (FirewallCheck.Check(session, port, !string.IsNullOrEmpty(session["FIREWALL_REMOTE_ADDRESS"]), log: false) is { } warning)
         {
             text += "\r\n\r\nFirewall: " + warning;
         }

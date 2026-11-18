@@ -17,11 +17,32 @@ public static class SettingsActions
     {
         try
         {
+            // The certificate dropdown (CertificateList): a thumbprint, or the self-signed choice.
+            var choice = session[CertificateList.ChoiceProperty] ?? "";
+            if (choice == CertificateList.SelfSignedChoice)
+            {
+                session["CERT_THUMBPRINT"] = "";
+                session["YANMT_CMD_CERT_THUMBPRINT"] = "";
+                session["CREATE_SELF_SIGNED_CERT"] = "1";
+            }
+            else
+            {
+                session["CERT_THUMBPRINT"] = choice;
+                session["CREATE_SELF_SIGNED_CERT"] = "";
+            }
+
             var settings = InstallSettings.Read(session);
+            if (choice.Length == 0)
+            {
+                settings.Errors.Insert(0, "Choose a certificate, or the self-signed one for a test or lab server.");
+                settings.Errors.RemoveAll(e => e.StartsWith("CERT_THUMBPRINT is required", StringComparison.Ordinal));
+            }
+
             session["YANMT_SETTINGS_ERROR"] = string.Join("\r\n", settings.Errors.Take(4));
             if (settings.Errors.Count == 0)
             {
                 settings.WriteBack(session);
+                session["YANMT_SETTINGS_FROM_DIALOG"] = "1";
 
                 // An emptied optional field must survive the execute sequence's AppSearch, which reads the
                 // old value back from the registry: say so explicitly (Package.wxs, YanmtClear_*).
@@ -87,7 +108,23 @@ public static class SettingsActions
             ["InstallFolder"] = installFolder,
             ["DataFolder"] = dataFolder,
         }.ToString();
-        session["GrantKeyRead"] = new CustomActionData { ["Thumbprint"] = settings.Thumbprint }.ToString();
+        if (settings.CreateSelfSigned)
+        {
+            // The certificate doesn't exist yet: CreateSelfSignedCert makes it with this serial number, and
+            // RemoveSelfSignedCert (rollback) and GrantKeyRead find it by that.
+            var serial = SelfSignedCertificate.NewSerial();
+            var certData = new CustomActionData { ["Serial"] = serial }.ToString();
+            session["YANMT_CREATE_CERT"] = "1";
+            session["CreateSelfSignedCert"] = certData;
+            session["RemoveSelfSignedCert"] = certData;
+            session["GrantKeyRead"] = certData;
+        }
+        else
+        {
+            session["YANMT_CREATE_CERT"] = "";
+            session["GrantKeyRead"] = new CustomActionData { ["Thumbprint"] = settings.Thumbprint }.ToString();
+        }
+
         session["StartYanmtService"] = new CustomActionData
         {
             ["Url"] = url,
@@ -118,12 +155,34 @@ public static class SettingsActions
             }.ToString();
         }
 
-        session.Log($"YANMT: settings OK. Port {settings.Port}, certificate {settings.Thumbprint}, " +
+        foreach (var note in settings.Notes)
+        {
+            session.Log("YANMT: " + note);
+        }
+
+        // Logged once, here, with the values this install uses: in a full-UI install this runs after the dialog.
+        var source = session["YANMT_SETTINGS_FROM_DIALOG"] == "1" ? "from the settings dialog" : "from the command line and stored settings";
+        var certificate = settings.CreateSelfSigned
+            ? "a new self-signed one (CREATE_SELF_SIGNED_CERT=1, created later in the install)"
+            : settings.Thumbprint;
+        session.Log($"YANMT: settings OK ({source}). Port {settings.Port}, certificate {certificate}, " +
             $"admin groups [{string.Join("; ", settings.AdminGroups.Select(g => g.Configured))}], " +
             $"viewer groups [{string.Join("; ", settings.ViewerGroups.Select(g => g.Configured))}], " +
             $"firewall remote address [{settings.FirewallRemoteAddress}]" +
             (settings.FirewallRemoteAddress.Length == 0 ? " (empty: no firewall rule is created)" : "") +
             $". Groups to create: [{string.Join("; ", settings.AllGroups.Where(g => g.CreateLocalName != null).Select(g => g.CreateLocalName))}].");
+        return ActionResult.Success;
+    }
+
+    /// <summary>
+    /// Immediate, UI and execute sequences, right after YanmtDetectLegacy (issue #49, M7). Both costing passes
+    /// get REINSTALLMODE=amus (Package.wxs), so neither logs a component skipped for a newer key file.
+    /// </summary>
+    [CustomAction]
+    public static ActionResult LogLegacyInstall(Session session)
+    {
+        session.Log("YANMT: legacy install detected: replacing all files regardless of version " +
+            $"(REINSTALLMODE=amus; service image [{session["YANMT_LEGACY_SERVICE"]}], exe [{session["YANMT_LEGACY_EXE"]}]).");
         return ActionResult.Success;
     }
 
